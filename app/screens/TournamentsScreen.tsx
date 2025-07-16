@@ -15,6 +15,11 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useRouter } from 'expo-router';
 
+type Category = {
+  id: string;
+  name: string;
+};
+
 type Tournament = {
   id: string;
   name: string;
@@ -22,54 +27,137 @@ type Tournament = {
   end_date: string;
   is_active: boolean;
   image_url?: string; // URL de la imagen del torneo
-  category: Array<{
-    name: string;
-  }> | null;
+  category_id: string;
+  category?: Category | null;
   tournament_registrations: Array<{ team_id: string }>;
   teams_count?: number;
 };
 
-export default function TournamentsScreen() {
+type TournamentsScreenProps = {
+  onTournamentPress?: (tournament: Tournament) => void;
+};
+
+export default function TournamentsScreen({ onTournamentPress }: TournamentsScreenProps) {
   const router = useRouter();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const getImageUrl = (url?: string) => {
+    if (!url) return null;
+    
+    // Si la URL ya es completa (http o https), la devolvemos tal cual
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return url;
+    }
+    
+    // Si es una ruta relativa, asumimos que está en la carpeta de imágenes estáticas
+    // y la combinamos con la URL base de la API
+    return `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/public/tournament-images/${url}`;
+  };
+
+  const renderTournamentCard = ({ item }: { item: Tournament }) => {
+    const startDate = item.start_date ? format(new Date(item.start_date), 'd MMM yyyy', { locale: es }) : 'Sin fecha';
+    const endDate = item.end_date ? format(new Date(item.end_date), 'd MMM yyyy', { locale: es }) : 'Presente';
+    const teamsCount = item.teams_count || item.tournament_registrations?.length || 0;
+    const categoryName = item.category?.name || 'Sin categoría';
+    const imageUrl = getImageUrl(item.image_url);
+
+    return (
+      
+      <TouchableOpacity 
+        style={styles.card}
+        onPress={() => {
+          if (onTournamentPress) {
+            onTournamentPress(item);
+          }
+        }}
+      >
+        {imageUrl ? (
+          <ImageBackground 
+            source={{ 
+              uri: imageUrl,
+              cache: 'force-cache'
+            }} 
+            style={styles.cardImage}
+            imageStyle={styles.cardImageBackground}
+            onError={(error) => {
+              console.log('Error al cargar la imagen:', error);
+            }}
+          >
+            <View style={styles.cardContent}>
+              <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+              <View style={styles.cardDetails}>
+                <Text style={styles.cardText}><Ionicons name="calendar" size={14} color="#fff" /> {startDate} - {endDate}</Text>
+                <Text style={styles.cardText}><Ionicons name="people" size={14} color="#fff" /> {teamsCount} equipos</Text>
+                <Text style={styles.cardText}><Ionicons name="trophy" size={14} color="#fff" /> {categoryName}</Text>
+              </View>
+            </View>
+          </ImageBackground>
+        ) : (
+          <View style={[styles.cardImage, { backgroundColor: '#e0e0e0' }]}>
+            <View style={styles.cardContent}>
+              <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+              <View style={styles.cardDetails}>
+                <Text style={styles.cardText}><Ionicons name="calendar" size={14} color="#333" /> {startDate} - {endDate}</Text>
+                <Text style={styles.cardText}><Ionicons name="people" size={14} color="#333" /> {teamsCount} equipos</Text>
+                <Text style={styles.cardText}><Ionicons name="trophy" size={14} color="#333" /> {categoryName}</Text>
+              </View>
+            </View>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
   const styles = StyleSheet.create({
     container: {
       flex: 1,
       backgroundColor: '#f8f9fa',
-      padding: 16,
     },
-    headerContainer: {
-      padding: 16,
-      backgroundColor: '#f8f9fa',
+    list: {
+      padding: 8,
     },
-    titleBox: {
-      backgroundColor: '#1976d2',
-      borderRadius: 8,
-      padding: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
+    card: {
+      margin: 8,
+      borderRadius: 12,
+      overflow: 'hidden',
+      elevation: 3,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.1,
       shadowRadius: 4,
-      elevation: 3,
+      backgroundColor: '#fff',
     },
-    title: {
-      fontSize: 24,
-      fontWeight: 'bold',
-      marginBottom: 16,
-      color: '#1a1a1a',
+    cardImage: {
+      height: 200,
+      justifyContent: 'flex-end',
+      backgroundColor: '#e0e0e0', // Color de fondo mientras se carga la imagen
     },
-    sectionTitle: {
-      fontSize: 22,
+    cardImageBackground: {
+      resizeMode: 'cover',
+      opacity: 0.9,
+    },
+    cardContent: {
+      padding: 16,
+      backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    cardTitle: {
+      fontSize: 20,
       fontWeight: 'bold',
-      color: 'white',
-      textTransform: 'uppercase',
-      letterSpacing: 1,
+      color: '#fff',
+      marginBottom: 8,
+    },
+    cardDetails: {
+      marginTop: 8,
+    },
+    cardText: {
+      color: '#fff',
+      fontSize: 14,
+      marginVertical: 2,
+      flexDirection: 'row',
+      alignItems: 'center',
     },
     loadingContainer: {
       flex: 1,
@@ -124,13 +212,6 @@ export default function TournamentsScreen() {
       flex: 1,
       justifyContent: 'center',
     },
-    cardContent: {
-      flex: 1,
-      padding: 12,
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: 'rgba(0, 0, 0, 0.5)', // Sobreposición oscura para mejor legibilidad
-    },
     tournamentName: {
       fontSize: 18,
       fontWeight: '600',
@@ -170,7 +251,8 @@ export default function TournamentsScreen() {
       console.log('Tabla: tournaments');
       console.log('Filtro: is_active = true');
       
-      const { data, error, count } = await supabase
+      // Primero obtenemos los torneos con los datos básicos
+      const { data: tournamentsData, error: tournamentsError, count } = await supabase
         .from('tournaments')
         .select(`
           id,
@@ -179,11 +261,41 @@ export default function TournamentsScreen() {
           end_date,
           is_active,
           image_url,
-          category:category_id (name),
+          category_id,
           tournament_registrations (team_id)
         `, { count: 'exact' })
         .eq('is_active', true)
         .order('start_date', { ascending: false });
+      
+      if (tournamentsError) {
+        console.error('❌ Error al cargar torneos:', tournamentsError);
+        setError(`Error al cargar los torneos: ${tournamentsError.message || 'Error desconocido'}`);
+        return [];
+      }
+      
+      // Obtenemos los IDs de categorías únicos
+      const categoryIds = [...new Set(tournamentsData.map(t => t.category_id))];
+      
+      // Obtenemos las categorías correspondientes
+      const { data: categoriesData, error: categoriesError } = await supabase
+        .from('categories')
+        .select('id, name')
+        .in('id', categoryIds);
+        
+      if (categoriesError) {
+        console.error('❌ Error al cargar categorías:', categoriesError);
+        // Continuamos sin las categorías en lugar de fallar
+        console.log('Continuando sin información de categorías');
+      }
+        
+      // Creamos un mapa de categorías para acceso rápido
+      const categoriesMap = new Map(categoriesData?.map(cat => [cat.id, cat]) || []);
+      
+      // Combinamos los datos
+      const data = tournamentsData.map(tournament => ({
+        ...tournament,
+        category: categoriesMap.get(tournament.category_id) || null
+      }));
 
       console.log('=== RESULTADOS DE LA CONSULTA ===');
       console.log('Cantidad de torneos encontrados:', count);
@@ -191,7 +303,10 @@ export default function TournamentsScreen() {
       
       if (error) {
         console.error('❌ Error en la consulta:', error);
-        setError(`Error al cargar los torneos: ${error.message}`);
+        const errorMessage = typeof error === 'object' && error !== null && 'message' in error 
+          ? String(error.message) 
+          : 'Error desconocido';
+        setError(`Error al cargar los torneos: ${errorMessage}`);
         return;
       }
       
@@ -239,66 +354,22 @@ export default function TournamentsScreen() {
     fetchTournaments();
   };
 
-  const renderTournament = ({ item }: { item: Tournament }) => {
-    // Generar un color de fondo basado en el nombre del torneo para consistencia
-    const colors = ['#1976d2', '#2e7d32', '#d32f2f', '#ed6c02', '#9c27b0'];
-    const colorIndex = Math.abs(item.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0)) % colors.length;
-    const backgroundColor = colors[colorIndex];
 
-    return (
-      <TouchableOpacity
-        style={styles.tournamentCard}
-        onPress={() => router.push({
-          pathname: '/TournamentDetails',
-          params: { tournamentId: item.id, tournamentName: item.name }
-        })}
-      >
-        {item.image_url ? (
-          <ImageBackground 
-            source={{ uri: item.image_url }}
-            style={styles.cardBackground}
-            resizeMode="cover"
-          >
-            <View style={styles.cardContent}>
-              <Text style={styles.tournamentName} numberOfLines={2} ellipsizeMode="tail">
-                {item.name || 'Torneo sin nombre'}
-              </Text>
-            </View>
-          </ImageBackground>
-        ) : (
-          <View style={[styles.cardBackground, { backgroundColor }]}>
-            <View style={styles.cardContent}>
-              <Text style={styles.tournamentName} numberOfLines={2} ellipsizeMode="tail">
-                {item.name || 'Torneo sin nombre'}
-              </Text>
-            </View>
-          </View>
-        )}
-      </TouchableOpacity>
-    );
-  };
-
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#FF6D00" />
-      </View>
-    );
-  }
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Torneos Activos</Text>
-      
-      {error ? (
-        <View style={[styles.emptyContainer, { padding: 20 }]}>
-          <Ionicons name="warning-outline" size={48} color="#ef4444" />
-          <Text style={[styles.emptyText, { color: '#ef4444' }]}>{error}</Text>
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#1976d2" />
+        </View>
+      ) : error ? (
+        <View style={styles.emptyContainer}>
+          <Ionicons name="alert-circle" size={48} color="#ef4444" />
+          <Text style={[styles.emptyText, { color: '#ef4444' }]}>Error al cargar los torneos</Text>
           <TouchableOpacity 
             style={styles.retryButton}
             onPress={() => {
               setError(null);
-              setLoading(true);
               fetchTournaments();
             }}
           >
@@ -307,34 +378,25 @@ export default function TournamentsScreen() {
         </View>
       ) : tournaments.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <Ionicons name="trophy-outline" size={48} color="#888" />
-          <Text style={styles.emptyText}>No hay torneos activos</Text>
-          <Text style={[styles.emptyText, { fontSize: 14, marginTop: 8 }]}>
-            Crea un nuevo torneo o activa uno existente en el panel de administración.
-          </Text>
+          <Ionicons name="trophy-outline" size={48} color="#9ca3af" />
+          <Text style={[styles.emptyText, { color: '#333' }]}>No hay torneos disponibles</Text>
         </View>
       ) : (
-        <View style={{ flex: 1 }}>
-          {/* Espacio para el encabezado */}
-          <View style={{ height: 20 }} />
-          <FlatList
-            data={tournaments}
-            renderItem={renderTournament}
-            keyExtractor={item => item.id}
-            numColumns={2}
-            columnWrapperStyle={styles.row}
-            contentContainerStyle={styles.gridContainer}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <Ionicons name="trophy-outline" size={48} color="#888" />
-                <Text style={styles.emptyText}>No hay torneos activos</Text>
-              </View>
-            }
-          />
-        </View>
+        <FlatList
+          data={tournaments}
+          keyExtractor={(item) => item.id}
+          renderItem={renderTournamentCard}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#1976d2']}
+              tintColor="#1976d2"
+            />
+          }
+          contentContainerStyle={styles.list}
+          numColumns={1}
+        />
       )}
     </View>
   );

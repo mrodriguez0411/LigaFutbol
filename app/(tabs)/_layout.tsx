@@ -18,11 +18,17 @@ export default function TabLayout() {
           borderBottomWidth: 1,
           borderBottomColor: theme.colors.outline,
           elevation: 0,
+          // Asegurar que la barra de pestañas permanezca visible
+          position: 'relative',
+          zIndex: 1,
         },
         tabBarLabelStyle: styles.tabLabel,
         tabBarItemStyle: styles.tabItem,
         tabBarActiveTintColor: '#FF6D00', // Naranja activo
         tabBarInactiveTintColor: '#9E9E9E', // Gris para inactivo
+        // Mantener la barra de pestañas visible en todas las pantallas
+        tabBarHideOnKeyboard: false,
+        tabBarShowLabel: true,
       }}>
       <Tabs.Screen
         name="Home"
@@ -43,7 +49,7 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="Tournaments"
+        name="tournaments"
         options={{
           title: 'Torneos',
           tabBarIcon: ({ color, size }) => (

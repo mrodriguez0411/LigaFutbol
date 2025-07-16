@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, ActivityIndicator, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, StyleSheet, FlatList, TouchableOpacity, Image } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { supabase } from '@/config/supabase';
 
@@ -37,33 +37,54 @@ export default function TournamentDetails() {
       .from('matches')
       .select(`
         id, round, match_date, home_team_id, away_team_id, home_team_score, away_team_score,
-        home_team:home_team_id (name),
-        away_team:away_team_id (name)
+        home_team:home_team_id (name, logo_url),
+        away_team:away_team_id (name, logo_url)
       `)
       .eq('tournament_id', tournamentId)
       .order('round', { ascending: true });
-    // 2. Traer tabla de posiciones
-    let standingsData = null;
+    // 2. Traer tabla de posiciones con todos los equipos del torneo
     let standingsErrorObj = null;
-    try {
-      const { data, error } = await supabase
-        .from('standings')
-        .select(`
-          id, team_id, points, played, won, drawn, lost, goals_for, goals_against, goal_difference,
-          team:team_id (name)
-        `)
-        .eq('tournament_id', tournamentId)
-        .order('points', { ascending: false });
-      if (error) {
-        console.error('Error al consultar standings:', error);
-        setStandingsError('Error al cargar la tabla de posiciones. (Ver consola)');
-        standingsErrorObj = error;
-      }
-      standingsData = data;
-    } catch (err: any) {
-      console.error('Excepción inesperada al consultar standings:', err);
-      setStandingsError('Error inesperado al cargar la tabla de posiciones.');
-      standingsErrorObj = err;
+    // Primero obtenemos los equipos del torneo
+    const { data: tournamentTeams, error: standingsError } = await supabase
+      .from('tournament_registrations')
+      .select(`
+        team:teams!inner(id, name, logo_url),
+        standings!left(
+          points, played, won, drawn, lost, goals_for, goals_against, goal_difference
+        )
+      `)
+      .eq('tournament_id', tournamentId);
+    
+    // Ordenamos los resultados manualmente después de obtenerlos
+    const sortedTeams = [...(tournamentTeams || [])].sort((a, b) => {
+      const aPoints = a.standings?.[0]?.points || 0;
+      const bPoints = b.standings?.[0]?.points || 0;
+      return bPoints - aPoints; // Orden descendente (mayor a menor)
+    });
+
+    // Procesar los datos para tener una estructura consistente
+    const processedStandings = (sortedTeams || []).map((item: any) => ({
+      id: item.team.id,
+      team_id: item.team.id,
+      team: {
+        id: item.team.id,
+        name: item.team.name,
+        logo_url: item.team.logo_url
+      },
+      points: item.standings?.[0]?.points || 0,
+      played: item.standings?.[0]?.played || 0,
+      won: item.standings?.[0]?.won || 0,
+      drawn: item.standings?.[0]?.drawn || 0,
+      lost: item.standings?.[0]?.lost || 0,
+      goals_for: item.standings?.[0]?.goals_for || 0,
+      goals_against: item.standings?.[0]?.goals_against || 0,
+      goal_difference: item.standings?.[0]?.goal_difference || 0
+    }));
+
+    if (standingsError) {
+      console.error('Error al consultar standings:', standingsError);
+      setStandingsError('Error al cargar la tabla de posiciones. (Ver consola)');
+      standingsErrorObj = standingsError;
     }
     if (matches) {
       setFixture(matches);
@@ -71,13 +92,10 @@ export default function TournamentDetails() {
       const uniqueRounds = Array.from(new Set(matches.map(m => m.round))).sort((a, b) => a - b);
       setRounds(uniqueRounds);
     }
-    if (standingsData && Array.isArray(standingsData)) {
-      setStandings(standingsData);
-      if (standingsData.length === 0) {
-        setStandingsError('No hay datos de posiciones para este torneo.');
-      }
-    } else if (!standingsErrorObj) {
-      setStandingsError('No fue posible cargar la tabla de posiciones.');
+    if (processedStandings.length > 0) {
+      setStandings(processedStandings);
+    } else {
+      setStandingsError('No hay equipos registrados en este torneo.');
     }
     setLoading(false);
   };
@@ -85,97 +103,379 @@ export default function TournamentDetails() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#FF6D00" />
-      </View>
+      <ScrollView style={styles.container}>
+        <Text style={styles.title}>{tournamentName || 'Detalle del Torneo'}</Text>
+        
+        {standingsError ? (
+          <View style={styles.errorContainer}>
+            <Text style={styles.errorText}>{standingsError}</Text>
+            <TouchableOpacity style={styles.retryButton} onPress={loadData}>
+              <Text style={styles.retryButtonText}>Reintentar</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <>
+            <Text style={styles.section}>Tabla de Posiciones</Text>
+            <View style={styles.tableContainer}>
+              <FlatList
+                data={standings.length > 0 ? standings : [{}]}
+                keyExtractor={(item, index) => item.id ? item.id : `empty-${index}`}
+                renderItem={({ item, index }) =>
+                  standings.length === 0 ? (
+                    <View style={[styles.tableRow, { backgroundColor: '#f9f9f9' }]}>
+                      <Text style={[styles.cell, { flex: 3 }]}>Sin datos</Text>
+                    </View>
+                  ) : (
+                    <View style={[styles.tableRow, { backgroundColor: index % 2 === 0 ? '#f9f9f9' : '#ffffff' }]} key={item.id}>
+                      <View style={[styles.cell, { flex: 3, flexDirection: 'row', alignItems: 'center' }]}>
+                        {item.team?.logo_url ? (
+                          <Image 
+                            source={{ uri: item.team.logo_url }} 
+                            style={styles.teamLogoSmall} 
+                            resizeMode="contain" 
+                          />
+                        ) : (
+                          <View style={[styles.teamLogoSmall, { backgroundColor: '#f0f0f0' }]} />
+                        )}
+                        <Text style={{ marginLeft: 8 }} numberOfLines={1} ellipsizeMode="tail">
+                          {item.team?.name}
+                        </Text>
+                      </View>
+                      <Text style={[styles.cell, { textAlign: 'center' }]}>{item.points}</Text>
+                      <Text style={[styles.cell, { textAlign: 'center' }]}>{item.played}</Text>
+                      <Text style={[styles.cell, { textAlign: 'center' }]}>{item.won}</Text>
+                      <Text style={[styles.cell, { textAlign: 'center' }]}>{item.drawn}</Text>
+                      <Text style={[styles.cell, { textAlign: 'center' }]}>{item.lost}</Text>
+                      <Text style={[styles.cell, { textAlign: 'center' }]}>{item.goals_for}</Text>
+                      <Text style={[styles.cell, { textAlign: 'center' }]}>{item.goals_against}</Text>
+                      <Text style={[styles.cell, { textAlign: 'center' }]}>{item.goal_difference}</Text>
+                    </View>
+                  )
+                }
+                ListHeaderComponent={() => (
+                  <View style={[styles.tableRow, { backgroundColor: '#f5f5f5' }]}>
+                    <Text style={[styles.cell, { flex: 3, fontWeight: 'bold' }]}>Equipo</Text>
+                    <Text style={[styles.cell, { fontWeight: 'bold' }]}>Pts</Text>
+                    <Text style={[styles.cell, { fontWeight: 'bold' }]}>PJ</Text>
+                    <Text style={[styles.cell, { fontWeight: 'bold' }]}>G</Text>
+                    <Text style={[styles.cell, { fontWeight: 'bold' }]}>E</Text>
+                    <Text style={[styles.cell, { fontWeight: 'bold' }]}>P</Text>
+                    <Text style={[styles.cell, { fontWeight: 'bold' }]}>GF</Text>
+                    <Text style={[styles.cell, { fontWeight: 'bold' }]}>GC</Text>
+                    <Text style={[styles.cell, { fontWeight: 'bold' }]}>DG</Text>
+                  </View>
+                )}
+              />
+            </View>
+          </>
+        )}
+
+        <Text style={styles.section}>Fixture</Text>
+        {rounds.map(round => (
+          <View key={round} style={styles.roundCard}>
+            <TouchableOpacity onPress={() => toggleRound(round)}>
+              <Text style={styles.roundTitle}>
+                Fecha {round} {expandedRounds.includes(round) ? '▲' : '▼'}
+              </Text>
+            </TouchableOpacity>
+            {expandedRounds.includes(round) && (
+              fixture.filter(m => m.round === round).map(match => (
+                <View key={match.id} style={styles.matchRow}>
+                  <View style={[styles.teamContainer, styles.teamContainerWithScore]}>
+                    {match.home_team?.logo_url && (
+                      <Image 
+                        source={{ uri: match.home_team.logo_url }} 
+                        style={styles.teamLogo} 
+                        resizeMode="contain" 
+                      />
+                    )}
+                    <Text style={styles.teamName} numberOfLines={1} ellipsizeMode="tail">
+                      {match.home_team?.name}
+                    </Text>
+                    <Text style={styles.teamScore}>
+                      {match.home_team_score ?? '-'}
+                    </Text>
+                  </View>
+                  <Text style={styles.vs}>vs</Text>
+                  <View style={[styles.teamContainer, styles.teamContainerWithScore]}>
+                    {match.away_team?.logo_url && (
+                      <Image 
+                        source={{ uri: match.away_team.logo_url }} 
+                        style={styles.teamLogo} 
+                        resizeMode="contain" 
+                      />
+                    )}
+                    <Text style={styles.teamName} numberOfLines={1} ellipsizeMode="tail">
+                      {match.away_team?.name}
+                    </Text>
+                    <Text style={styles.teamScore}>
+                      {match.away_team_score ?? '-'}
+                    </Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        ))}
+      </ScrollView>
     );
   }
 
   return (
     <ScrollView style={styles.container}>
       <Text style={styles.title}>{tournamentName || 'Detalle del Torneo'}</Text>
-      <Text style={styles.section}>Tabla de Posiciones</Text>
-      <FlatList
-        data={standings.length > 0 ? standings : [{}]}
-        keyExtractor={(item, index) => item.id ? item.id : `empty-${index}`}
-        renderItem={({ item, index }) =>
-          standings.length === 0 ? (
-            <View style={[styles.tableRow, styles.tableRowEven]}>
-              <Text style={[styles.cell, styles.cellTeam]}>Sin datos</Text>
-            </View>
-          ) : (
-            <View style={[styles.tableRow, index % 2 === 0 ? styles.tableRowEven : styles.tableRowOdd]}>
-              <Text style={[styles.cell, styles.cellTeam]}>{item.team?.name || '-'}</Text>
-              <Text style={styles.cell}>{item.points}</Text>
-              <Text style={styles.cell}>{item.played}</Text>
-              <Text style={styles.cell}>{item.won}</Text>
-              <Text style={styles.cell}>{item.drawn}</Text>
-              <Text style={styles.cell}>{item.lost}</Text>
-              <Text style={styles.cell}>{item.goals_for}</Text>
-              <Text style={styles.cell}>{item.goals_against}</Text>
-              <Text style={styles.cell}>{item.goal_difference}</Text>
-            </View>
-          )
-        }
-        ListHeaderComponent={() => (
-          <View style={[styles.tableRow, styles.tableRowHeaderNaranja]}>
-            <Text style={[styles.cell, styles.cellTeamHeader]}>Equipo</Text>
-            <Text style={styles.cellHeader}>Pts</Text>
-            <Text style={styles.cellHeader}>PJ</Text>
-            <Text style={styles.cellHeader}>G</Text>
-            <Text style={styles.cellHeader}>E</Text>
-            <Text style={styles.cellHeader}>P</Text>
-            <Text style={styles.cellHeader}>GF</Text>
-            <Text style={styles.cellHeader}>GC</Text>
-            <Text style={styles.cellHeader}>DG</Text>
+      
+      {standingsError ? (
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{standingsError}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={loadData}>
+            <Text style={styles.retryButtonText}>Reintentar</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.section}>Tabla de Posiciones</Text>
+          <View style={styles.tableContainer}>
+            <FlatList
+              data={standings.length > 0 ? standings : [{}]}
+              keyExtractor={(item, index) => item.id ? item.id : `empty-${index}`}
+              renderItem={({ item, index }) =>
+                standings.length === 0 ? (
+                  <View style={[styles.tableRow, { backgroundColor: '#f9f9f9' }]}>
+                    <Text style={[styles.cell, { flex: 3 }]}>Sin datos</Text>
+                  </View>
+                ) : (
+                  <View style={[styles.tableRow, { backgroundColor: index % 2 === 0 ? '#f9f9f9' : '#ffffff' }]} key={item.id}>
+                    <View style={[styles.cell, { flex: 3, flexDirection: 'row', alignItems: 'center' }]}>
+                      {item.team?.logo_url ? (
+                        <Image 
+                          source={{ uri: item.team.logo_url }} 
+                          style={styles.teamLogoSmall} 
+                          resizeMode="contain" 
+                        />
+                      ) : (
+                        <View style={[styles.teamLogoSmall, { backgroundColor: '#f0f0f0' }]} />
+                      )}
+                      <Text style={{ marginLeft: 8 }} numberOfLines={1} ellipsizeMode="tail">
+                        {item.team?.name}
+                      </Text>
+                    </View>
+                    <Text style={[styles.cell, { textAlign: 'center' }]}>{item.points}</Text>
+                    <Text style={[styles.cell, { textAlign: 'center' }]}>{item.played}</Text>
+                    <Text style={[styles.cell, { textAlign: 'center' }]}>{item.won}</Text>
+                    <Text style={[styles.cell, { textAlign: 'center' }]}>{item.drawn}</Text>
+                    <Text style={[styles.cell, { textAlign: 'center' }]}>{item.lost}</Text>
+                    <Text style={[styles.cell, { textAlign: 'center' }]}>{item.goals_for}</Text>
+                    <Text style={[styles.cell, { textAlign: 'center' }]}>{item.goals_against}</Text>
+                    <Text style={[styles.cell, { textAlign: 'center' }]}>{item.goal_difference}</Text>
+                  </View>
+                )
+              }
+              ListHeaderComponent={() => (
+                <View style={[styles.tableRow, { backgroundColor: '#FF6D00' }]}>
+                  <Text style={[styles.cell, { flex: 3, fontWeight: 'bold', color: '#fff' }]}>Equipo</Text>
+                  <Text style={[styles.cell, { fontWeight: 'bold', color: '#fff' }]}>Pts</Text>
+                  <Text style={[styles.cell, { fontWeight: 'bold', color: '#fff' }]}>PJ</Text>
+                  <Text style={[styles.cell, { fontWeight: 'bold', color: '#fff' }]}>G</Text>
+                  <Text style={[styles.cell, { fontWeight: 'bold', color: '#fff' }]}>E</Text>
+                  <Text style={[styles.cell, { fontWeight: 'bold', color: '#fff' }]}>P</Text>
+                  <Text style={[styles.cell, { fontWeight: 'bold', color: '#fff' }]}>GF</Text>
+                  <Text style={[styles.cell, { fontWeight: 'bold', color: '#fff' }]}>GC</Text>
+                  <Text style={[styles.cell, { fontWeight: 'bold', color: '#fff' }]}>DG</Text>
+                </View>
+              )}
+            />
           </View>
-        )}
-      />
+        </>
+      )}
 
       <Text style={styles.section}>Fixture</Text>
       {rounds.map(round => (
-  <View key={round} style={styles.roundCard}>
-    <TouchableOpacity onPress={() => toggleRound(round)}>
-      <Text style={styles.roundTitle}>
-        Fecha {round} {expandedRounds.includes(round) ? '▲' : '▼'}
-      </Text>
-    </TouchableOpacity>
-    {expandedRounds.includes(round) && (
-      fixture.filter(m => m.round === round).map(match => (
-        <View key={match.id} style={styles.matchRow}>
-          <Text style={styles.teamName}>{match.home_team?.name}</Text>
-          <Text style={styles.vs}>vs</Text>
-          <Text style={styles.teamName}>{match.away_team?.name}</Text>
-          <Text style={styles.score}>{match.home_team_score ?? '-'} : {match.away_team_score ?? '-'}</Text>
+        <View key={round} style={styles.roundCard}>
+          <TouchableOpacity onPress={() => toggleRound(round)}>
+            <Text style={styles.roundTitle}>
+              Fecha {round} {expandedRounds.includes(round) ? '▲' : '▼'}
+            </Text>
+          </TouchableOpacity>
+          {expandedRounds.includes(round) && (
+            fixture.filter(m => m.round === round).map(match => (
+              <View key={match.id} style={styles.matchRow}>
+                <View style={[styles.teamContainer, styles.teamContainerWithScore]}>
+                  {match.home_team?.logo_url && (
+                    <Image 
+                      source={{ uri: match.home_team.logo_url }} 
+                      style={styles.teamLogo} 
+                      resizeMode="contain" 
+                    />
+                  )}
+                  <Text style={styles.teamName} numberOfLines={1} ellipsizeMode="tail">
+                    {match.home_team?.name}
+                  </Text>
+                  <Text style={styles.teamScore}>
+                    {match.home_team_score ?? '-'}
+                  </Text>
+                </View>
+                <Text style={styles.vs}>vs</Text>
+                <View style={[styles.teamContainer, styles.teamContainerWithScore]}>
+                  {match.away_team?.logo_url && (
+                    <Image 
+                      source={{ uri: match.away_team.logo_url }} 
+                      style={styles.teamLogo} 
+                      resizeMode="contain" 
+                    />
+                  )}
+                  <Text style={styles.teamName} numberOfLines={1} ellipsizeMode="tail">
+                    {match.away_team?.name}
+                  </Text>
+                  <Text style={styles.teamScore}>
+                    {match.away_team_score ?? '-'}
+                  </Text>
+                </View>
+              </View>
+            ))
+          )}
         </View>
-      ))
-    )}
-  </View>
-))}
+      ))}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff', padding: 16 },
-  title: { fontSize: 22, fontWeight: 'bold', marginBottom: 18, textAlign: 'center' },
-  section: { fontSize: 18, fontWeight: 'bold', marginTop: 18, marginBottom: 10 },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  tableRow: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#eee', paddingVertical: 8 },
-  tableRowHeaderNaranja: { backgroundColor: '#FF6D00', borderTopLeftRadius: 6, borderTopRightRadius: 6 },
-  tableRowEven: { backgroundColor: '#fff' },
-  tableRowOdd: { backgroundColor: '#fafafa' },
-  cell: { flex: 1, textAlign: 'center', fontSize: 14, color: '#222', paddingVertical: 4 },
-  cellTeam: { flex: 2, fontWeight: 'bold', textAlign: 'left', color: '#222' },
-  cellHeader: { flex: 1, textAlign: 'center', fontSize: 14, color: '#fff', fontWeight: 'bold' },
-  cellTeamHeader: { flex: 2, fontWeight: 'bold', textAlign: 'left', color: '#fff' },
-  emptyContainer: { alignItems: 'center', marginTop: 40 },
-  emptyText: { fontSize: 16, color: '#888', marginTop: 8 },
-  retryButton: { marginTop: 12, padding: 10, backgroundColor: '#1976d2', borderRadius: 6 },
-  roundCard: { backgroundColor: '#f9f9f9', marginVertical: 10, borderRadius: 8, padding: 12, elevation: 2 },
-  roundTitle: { fontWeight: 'bold', fontSize: 16, marginBottom: 8, color: '#FF6D00' },
-  matchRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  teamName: { flex: 2, fontSize: 14 },
-  vs: { flex: 1, textAlign: 'center', color: '#888' },
-  score: { flex: 1, textAlign: 'center', fontWeight: 'bold' },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#fff', 
+    padding: 16 
+  },
+  title: { 
+    fontSize: 22, 
+    fontWeight: 'bold', 
+    marginBottom: 18, 
+    textAlign: 'center' 
+  },
+  section: { 
+    fontSize: 18, 
+    fontWeight: 'bold', 
+    marginTop: 24, 
+    marginBottom: 12 
+  },
+  loadingContainer: { 
+    flex: 1, 
+    justifyContent: 'center', 
+    alignItems: 'center' 
+  },
+  tableContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  tableRow: {
+    flexDirection: 'row',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    alignItems: 'center',
+  },
+  cell: {
+    flex: 1,
+    textAlign: 'center',
+    fontSize: 12,
+    paddingHorizontal: 2,
+  },
+  emptyContainer: { 
+    alignItems: 'center', 
+    marginTop: 40 
+  },
+  emptyText: { 
+    fontSize: 16, 
+    color: '#888', 
+    marginTop: 8 
+  },
+  retryButton: { 
+    marginTop: 12, 
+    padding: 10, 
+    backgroundColor: '#1976d2', 
+    borderRadius: 6 
+  },
+  retryButtonText: { 
+    color: '#fff', 
+    fontWeight: 'bold' 
+  },
+  errorContainer: { 
+    backgroundColor: '#ffebee', 
+    padding: 12, 
+    borderRadius: 6, 
+    marginBottom: 16 
+  },
+  errorText: { 
+    color: '#c62828', 
+    marginBottom: 8 
+  },
+  roundCard: { 
+    backgroundColor: '#fff', 
+    borderRadius: 8, 
+    marginBottom: 12, 
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  roundTitle: { 
+    backgroundColor: '#f5f5f5', 
+    padding: 12, 
+    fontWeight: 'bold', 
+    color: '#333' 
+  },
+  matchRow: { 
+    padding: 12, 
+    borderBottomWidth: 1, 
+    borderBottomColor: '#eee',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  teamContainer: { 
+    flexDirection: 'row', 
+    alignItems: 'center',
+    flex: 1,
+  },
+  teamContainerWithScore: { 
+    justifyContent: 'space-between',
+  },
+  vs: { 
+    marginHorizontal: 12, 
+    fontWeight: 'bold', 
+    color: '#666',
+    minWidth: 30,
+    textAlign: 'center',
+  },
+  teamLogo: {
+    width: 32,
+    height: 32,
+    marginRight: 8,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  teamLogoSmall: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  teamName: { 
+    flex: 1, 
+    marginLeft: 8,
+    fontSize: 12,
+  },
+  teamScore: {
+    fontWeight: 'bold',
+    marginLeft: 8,
+    minWidth: 20,
+    textAlign: 'right',
+  },
+  score: { 
+    fontWeight: 'bold', 
+    fontSize: 16 
+  },
 });

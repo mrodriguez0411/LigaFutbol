@@ -50,7 +50,9 @@
     "react-native-safe-area-context": "^5.4.1",
     "react-native-screens": "~4.10.0",
     "react-native-tab-view": "^4.1.2",
+    "react-native-tooltip": "^5.2.0",
     "react-native-vector-icons": "^10.2.0",
+    "react-native-walkthrough-tooltip": "^1.6.0",
     "react-native-web": "~0.20.0",
     "react-native-webview": "13.13.5"
   },

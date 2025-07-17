@@ -3,7 +3,14 @@ import { View, Text, StyleSheet, ScrollView, Image } from 'react-native';
 import { Card } from 'react-native-paper';
 
 const TeamProfileScreen = ({ route }: { route: any }) => {
-  const { team } = route.params;
+  // Parseamos el objeto team que viene como string
+  const team = route.params?.team ? JSON.parse(route.params.team) : {
+    name: 'Equipo no encontrado',
+    logoUrl: 'https://via.placeholder.com/150',
+    coach: 'No disponible',
+    stadium: 'No disponible',
+    colors: 'No disponible'
+  };
 
   const players = [
     {

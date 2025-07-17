@@ -10,7 +10,8 @@ import {
   ActivityIndicator, 
   Image,
   Switch,
-  Platform
+  Platform,
+  Dimensions
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -20,6 +21,7 @@ import { supabase } from '@/config/supabase';
 import { StackActions } from '@react-navigation/native';
 import { useNavigation } from '@react-navigation/native';
 import * as FileSystem from 'expo-file-system';
+import { HoverTooltip } from '../../components/HoverTooltip';
 import * as ImageManipulator from 'expo-image-manipulator';
 import { decode } from 'base64-arraybuffer';
 
@@ -27,6 +29,17 @@ import { decode } from 'base64-arraybuffer';
 type Category = {
   id: string;
   name: string;
+};
+
+type Player = {
+  id: string;
+  first_name: string;
+  last_name: string;
+  dni: string;
+  position?: string | null;
+  number?: string | null;
+  team_id?: string | null;
+  photo_url?: string | null;
 };
 
 type TeamFormData = {
@@ -49,6 +62,8 @@ export default function TeamForm() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [loadingPlayers, setLoadingPlayers] = useState(false);
   const [tempImage, setTempImage] = useState<string | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   
@@ -100,70 +115,110 @@ export default function TeamForm() {
     }
   }, []);
 
-  // Fetch team data by ID
-  const fetchTeam = useCallback(async (teamId: string) => {
+  // Fetch team data if in edit mode
+  const fetchTeam = useCallback(async () => {
     if (!teamId) {
-      console.error('No team ID provided');
       return;
     }
-
+    
     try {
-      console.log('Fetching team with ID:', teamId);
       setLoading(true);
-      
-      // Verificar sesión primero
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      console.log('Sesión actual:', session);
-      console.log('Error de sesión:', sessionError);
-      
-      if (!session) {
-        const errorMsg = 'No hay una sesión activa. Por favor inicia sesión.';
-        console.error(errorMsg);
-        throw new Error(errorMsg);
-      }
-
       const { data, error } = await supabase
         .from('teams')
         .select('*')
         .eq('id', teamId)
         .single();
 
-      console.log('Team fetch response:', { data, error });
-
-      if (error) {
-        console.error('Supabase error:', error);
-        throw error;
-      }
-
-      if (!data) {
-        throw new Error('Team not found');
-      }
-
-      console.log('Setting form data with:', data);
-      setFormData({
-        id: data.id,
-        name: data.name,
-        category_id: data.category_id,
-        is_active: data.is_active,
-        logo_url: data.logo_url,
-        description: data.description || ''
-      });
-
-      if (data.logo_url) {
-        console.log('Setting team logo:', data.logo_url);
+      if (error) throw error;
+      if (data) {
+        console.log('Datos del equipo cargados:', data);
+        setFormData(prev => ({
+          ...prev,
+          id: data.id,
+          name: data.name,
+          category_id: data.category_id,
+          logo_url: data.logo_url
+        }));
         setImageUrl(data.logo_url);
       }
     } catch (error) {
-      console.error('Error in fetchTeam:', {
-        error,
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      Alert.alert('Error', 'Error al cargar los datos del equipo. Por favor, inténtalo de nuevo.');
+      console.error('Error loading team:', error);
+      Alert.alert('Error', 'No se pudo cargar el equipo');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [teamId]);
+
+  // Save team
+  const handleSave = async () => {
+    if (!formData.name || !formData.category_id) {
+      Alert.alert('Error', 'Por favor completa todos los campos requeridos');
+      return;
+    }
+
+    try {
+      setSaving(true);
+      
+      // Upload image if there's a new one
+      let logoUrl = formData.logo_url;
+      if (tempImage) {
+        logoUrl = await uploadImage(tempImage);
+      }
+
+      // Prepare team data
+      const teamData = {
+        name: formData.name,
+        category_id: formData.category_id,
+        logo_url: logoUrl,
+        updated_at: new Date().toISOString()
+      };
+
+      let result;
+      if (teamId) {
+        // Update existing team
+        const { data, error } = await supabase
+          .from('teams')
+          .update(teamData)
+          .eq('id', teamId)
+          .select()
+          .single();
+          
+        if (error) throw error;
+        result = data;
+      } else {
+        // Create new team
+        const { data, error } = await supabase
+          .from('teams')
+          .insert([{ ...teamData, created_at: new Date().toISOString() }])
+          .select()
+          .single();
+          
+        if (error) throw error;
+        result = data;
+      }
+
+      Alert.alert(
+        'Éxito', 
+        teamId ? 'Equipo actualizado correctamente' : 'Equipo creado correctamente',
+        [
+          { 
+            text: 'OK', 
+            onPress: () => {
+              // @ts-ignore
+              navigation.dispatch(
+                StackActions.replace('(admin)/teams')
+              );
+            } 
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Error saving team:', error);
+      Alert.alert('Error', 'No se pudo guardar el equipo');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // Subir imagen a Supabase Storage
   const uploadImage = useCallback(async (imageUri: string): Promise<string> => {
@@ -586,6 +641,33 @@ export default function TeamForm() {
     loadCategories();
   }, [fetchCategories]);
 
+  // Función para cargar los jugadores del equipo
+  const fetchTeamPlayers = useCallback(async (teamId: string) => {
+    if (!teamId) return;
+    
+    try {
+      setLoadingPlayers(true);
+      console.log('Fetching players for team:', teamId);
+      
+      // Obtenemos los jugadores con los campos necesarios
+      const { data, error } = await supabase
+        .from('players')
+        .select('*')
+        .eq('team_id', teamId)
+        .order('last_name', { ascending: true });
+        
+      if (error) throw error;
+      
+      console.log('Players loaded:', data?.length || 0);
+      setPlayers(data || []);
+    } catch (error) {
+      console.error('Error loading players:', error);
+      Alert.alert('Error', 'No se pudieron cargar los jugadores del equipo');
+    } finally {
+      setLoadingPlayers(false);
+    }
+  }, []);
+
   // Cargar datos del equipo si está en modo edición
   useEffect(() => {
     if (!teamId) {
@@ -621,6 +703,9 @@ export default function TeamForm() {
           if (data.logo_url) {
             setImageUrl(data.logo_url);
           }
+          
+          // Cargar jugadores del equipo
+          await fetchTeamPlayers(teamId);
         }
       } catch (error) {
         console.error('Error loading team:', error);
@@ -631,7 +716,17 @@ export default function TeamForm() {
     };
 
     loadTeam();
-  }, [teamId]);
+  }, [teamId, fetchTeamPlayers]);
+  
+  // Manejar la actualización cuando se navega de vuelta desde PlayerForm
+  useEffect(() => {
+    if (teamId) {
+      // Forzar una recarga de los jugadores cuando el componente se monta o se actualiza
+      // Esto asegura que los datos estén actualizados después de volver de PlayerForm
+      console.log('Cargando jugadores del equipo...');
+      fetchTeamPlayers(teamId);
+    }
+  }, [teamId, fetchTeamPlayers]);
 
   if (loading) {
     return (
@@ -640,6 +735,89 @@ export default function TeamForm() {
       </View>
     );
   }
+
+  // Función para navegar a la pantalla de edición/creación de jugador
+
+  // Función para manejar la eliminación de un jugador
+  const handleDeletePlayer = async (playerId: string, playerName: string) => {
+    // Mostrar confirmación antes de eliminar
+    Alert.alert(
+      'Eliminar Jugador',
+      `¿Estás seguro de que deseas eliminar a ${playerName}?`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoadingPlayers(true);
+              const { error } = await supabase
+                .from('players')
+                .delete()
+                .eq('id', playerId);
+
+              if (error) throw error;
+              
+              // Actualizar la lista de jugadores
+              if (teamId) {
+                await fetchTeamPlayers(teamId);
+              }
+              
+              Alert.alert('Éxito', 'Jugador eliminado correctamente');
+            } catch (error) {
+              console.error('Error al eliminar el jugador:', error);
+              Alert.alert('Error', 'No se pudo eliminar el jugador');
+            } finally {
+              setLoadingPlayers(false);
+            }
+          },
+        },
+      ],
+      { cancelable: true }
+    );
+  };
+
+  // Función para manejar la suspensión de un jugador
+  const handleSuspendPlayer = (playerId: string) => {
+    // TODO: Implementar lógica de suspensión
+    Alert.alert(
+      'Suspender Jugador',
+      'Funcionalidad de suspensión en desarrollo',
+      [
+        {
+          text: 'Aceptar',
+          style: 'default',
+        },
+      ]
+    );
+  };
+
+  const navigateToPlayerForm = (playerId?: string) => {
+    if (!teamId) return;
+    
+    if (playerId) {
+      // Navegar a la edición de jugador existente
+      router.push({
+        pathname: '/(admin)/PlayerForm',
+        params: { 
+          playerId: playerId,
+          teamId: teamId 
+        }
+      });
+    } else {
+      // Navegar a la creación de nuevo jugador
+      router.push({
+        pathname: '/(admin)/PlayerForm',
+        params: { 
+          teamId: teamId 
+        }
+      });
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -718,9 +896,92 @@ export default function TeamForm() {
           )}
         </View>
 
-
-
-
+        {teamId && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>Jugadores del Equipo</Text>
+              <TouchableOpacity 
+                style={styles.addButton}
+                onPress={() => navigateToPlayerForm()}
+                disabled={!teamId}
+              >
+                <Ionicons name="add-circle" size={24} color="#FF6D00" />
+                <Text style={styles.addButtonText}>Agregar Jugador</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {loadingPlayers ? (
+              <ActivityIndicator size="small" color="#FF6D00" style={styles.loadingIndicator} />
+            ) : players.length === 0 ? (
+              <Text style={styles.emptyText}>No hay jugadores en este equipo</Text>
+            ) : (
+              <View style={styles.playersList}>
+                {players.map((player, index) => (
+                  <TouchableOpacity 
+                    key={player.id} 
+                    style={styles.playerItem}
+                    onPress={() => navigateToPlayerForm(player.id)}
+                  >
+                    <View style={styles.playerNumber}>
+                      <Text style={styles.playerNumberText}>{index + 1}</Text>
+                    </View>
+                    <View style={styles.playerInfoContainer}>
+                      {player.photo_url ? (
+                        <Image 
+                          source={{ uri: player.photo_url }} 
+                          style={styles.playerImage}
+                        />
+                      ) : (
+                        <View style={styles.playerImagePlaceholder}>
+                          <Ionicons name="person" size={20} color="#fff" />
+                        </View>
+                      )}
+                      <View style={styles.playerInfo}>
+                        <Text style={styles.playerName}>
+                          {player.last_name}, {player.first_name}
+                        </Text>
+                        {player.dni && (
+                          <Text style={styles.playerDni}>DNI: {player.dni}</Text>
+                        )}
+                      </View>
+                    </View>
+                    <View style={styles.actionsContainer}>
+                      <HoverTooltip content="Editar jugador">
+                        <TouchableOpacity 
+                          style={[styles.actionButton, styles.editButton]}
+                          onPress={() => navigateToPlayerForm(player.id)}
+                        >
+                          <Ionicons name="create-outline" size={18} color="white" />
+                        </TouchableOpacity>
+                      </HoverTooltip>
+                      
+                      <HoverTooltip content="Gestionar suspensiones">
+                        <TouchableOpacity 
+                          style={[styles.actionButton, styles.suspendButton]}
+                          onPress={() => handleSuspendPlayer(player.id)}
+                        >
+                          <Ionicons name="alert-circle-outline" size={18} color="white" />
+                        </TouchableOpacity>
+                      </HoverTooltip>
+                      
+                      <HoverTooltip content="Eliminar jugador">
+                        <TouchableOpacity 
+                          style={[styles.actionButton, styles.deleteButton]}
+                          onPress={() => handleDeletePlayer(player.id, `${player.first_name} ${player.last_name}`)}
+                        >
+                          <Ionicons name="trash-outline" size={18} color="white" />
+                        </TouchableOpacity>
+                      </HoverTooltip>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+                <Text style={styles.totalPlayers}>
+                  Total de jugadores: {players.length}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
       </ScrollView>
 
       <View style={styles.footer}>
@@ -759,18 +1020,134 @@ export default function TeamForm() {
       </View>
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
+    paddingBottom: 16,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
+  },
+  // Estilos para la sección de jugadores
+  section: {
+    marginTop: 24,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#eee',
+    marginHorizontal: 16,
+  },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+  },
+  addButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+  },
+  addButtonText: {
+    color: '#FF6D00',
+    marginLeft: 8,
+    fontWeight: '500',
+  },
+  loadingIndicator: {
+    marginVertical: 16,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: '#666',
+    marginVertical: 16,
+  },
+  playersList: {
+    marginTop: 12,
+  },
+  playerItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  playerInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  playerInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  playerImage: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+  },
+  playerImagePlaceholder: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#CCCCCC',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  actionsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  actionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 6,
+  },
+  editButton: {
+    backgroundColor: '#4CAF50',
+  },
+  deleteButton: {
+    backgroundColor: '#F44336',
+  },
+  suspendButton: {
+    backgroundColor: '#FF9800',
+  },
+  tooltipContentContainer: {
+    padding: 8,
+    borderRadius: 4,
+  },
+  tooltipContent: {
+    color: 'white',
+    fontSize: 12,
+  },
+  playerName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#333',
+  },
+  playerDni: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
   },
   header: {
     backgroundColor: '#121212',
@@ -813,7 +1190,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ddd',
   },
-
   imagePicker: {
     width: 150,
     height: 150,
@@ -872,29 +1248,6 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
-  errorText: {
-    color: '#ff4444',
-    fontSize: 12,
-    marginTop: 4,
-    marginLeft: 4,
-  },
-  pickerContainer: {
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    overflow: 'hidden',
-    marginBottom: 8,
-  },
-  picker: {
-    width: '100%',
-    backgroundColor: '#fff',
-    height: 50,
-  },
-  switchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
   footer: {
     flexDirection: 'row',
     padding: 15,
@@ -924,12 +1277,103 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   cancelButtonText: {
-    color: '#666',
+    color: '#333',
   },
   saveButton: {
     backgroundColor: '#FF6D00',
   },
   saveButtonDisabled: {
-    opacity: 0.6,
+    backgroundColor: '#FFB07F',
+  },
+  errorText: {
+    color: '#ff4444',
+    fontSize: 12,
+    marginTop: 4,
+    marginLeft: 4,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  picker: {
+    width: '100%',
+    backgroundColor: '#fff',
+    height: 50,
+  },
+  switchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  // Player management
+  inputGroup: {
+    marginBottom: 16,
+  },
+  playerForm: {
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
+  formTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 16,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  playerDetails: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  removeButton: {
+    padding: 8,
+  },
+  emptyState: {
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: '#f9f9f9',
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  emptyStateText: {
+    marginTop: 12,
+    color: '#999',
+    textAlign: 'center',
+  },
+  addButtonSmall: {
+    padding: 8,
+    marginLeft: 8,
+  },
+  playerNumber: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: '#FF6D00',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  playerNumberText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  totalPlayers: {
+    textAlign: 'right',
+    marginTop: 10,
+    color: '#666',
+    fontSize: 14,
+    fontStyle: 'italic',
   },
 });

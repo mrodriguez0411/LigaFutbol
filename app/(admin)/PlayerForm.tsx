@@ -68,7 +68,6 @@ interface PlayerFormData {
   address: string | null;
   photo_url?: string | null;
   team_id?: string | null;
-  position?: string | null;
   number?: string | null;
   status?: 'active' | 'suspended';
 };
@@ -92,12 +91,9 @@ export default function PlayerForm() {
     last_name: '',
     dni: '',
     date_of_birth: null,
-    email: null,
-    address: null,
-    photo_url: null,
+    email: '',
+    address: '',
     team_id: teamId || null,
-    position: '',
-    number: '',
     status: 'active',
   });
   
@@ -118,84 +114,85 @@ export default function PlayerForm() {
   // Cargar datos del jugador si estamos editando
   useEffect(() => {
     const loadPlayerData = async () => {
-      if (playerId) {
-        try {
-          setLoading(true);
-          console.log('Cargando datos del jugador con ID:', playerId);
-          
-          // Obtener datos del jugador con información del equipo si tiene
-          const { data, error } = await supabase
-            .from('players')
-            .select(`
-              *,
-              teams (
-                id,
-                name
-              )
-            `)
-            .eq('id', playerId)
-            .single();
+      if (!playerId) {
+        setLoading(false);
+        return;
+      }
 
-          if (error) {
-            console.error('Error al cargar jugador:', error);
-            throw error;
-          }
-          
-          console.log('Datos completos del jugador:', JSON.stringify(data, null, 2));
-          
-          if (data) {
-            // Mapear los campos de la base de datos al formulario
-            const playerData: PlayerFormData = {
-              id: data.id,
-              first_name: data.first_name || '',
-              last_name: data.last_name || '',
-              dni: data.dni || '',
-              date_of_birth: data.birth_date || data.date_of_birth || null, // Compatibilidad con ambos nombres de campo
-              email: data.email || null,
-              address: data.address || null,
-              photo_url: data.photo_url || null,
-              team_id: data.team_id || null,
-              position: data.position || '',
-              number: data.number ? String(data.number) : '',
-              status: data.status || 'active',
-            };
-            
-            console.log('Datos del jugador mapeados:', JSON.stringify(playerData, null, 2));
-            
-            // Actualizar el estado del formulario con los datos del jugador
-            setFormData(playerData);
-            
-            // Configurar la fecha de nacimiento si existe
-            const birthDateToSet = data.birth_date || data.date_of_birth;
-            if (birthDateToSet) {
-              try {
-                // Asegurarse de que la fecha esté en el formato correcto
-                const parsedDate = new Date(birthDateToSet);
-                if (!isNaN(parsedDate.getTime())) {
-                  console.log('Estableciendo fecha de nacimiento:', parsedDate);
-                  setBirthDate(parsedDate);
-                  setDate(parsedDate);
-                } else {
-                  console.warn('Fecha de nacimiento inválida:', birthDateToSet);
-                }
-              } catch (dateError) {
-                console.error('Error al procesar la fecha de nacimiento:', dateError);
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Error loading player data:', error);
+      try {
+        setLoading(true);
+        console.log('Cargando datos del jugador con ID:', playerId);
+        
+        // Obtener datos del jugador con información del equipo si tiene
+        const { data, error } = await supabase
+          .from('players')
+          .select(`
+            *,
+            teams (
+              id,
+              name
+            )
+          `)
+          .eq('id', playerId)
+          .single();
+
+        if (error) {
+          console.error('Error cargando jugador:', error);
           Alert.alert('Error', 'No se pudo cargar la información del jugador');
-        } finally {
-          setLoading(false);
+          return;
         }
-      } else {
+
+        if (!data) {
+          setLoading(false);
+          return;
+        }
+
+        // Mapear los datos del jugador al formulario
+        const playerData: PlayerFormData = {
+          id: data.id,
+          first_name: data.first_name || '',
+          last_name: data.last_name || '',
+          dni: data.dni || '',
+          email: data.email || null,
+          address: data.address || null,
+          team_id: data.team_id || teamId || null,
+          status: data.status || 'active',
+          date_of_birth: data.date_of_birth || null,
+          photo_url: data.photo_url || null
+        };
+
+        // Actualizar el estado del formulario
+        setFormData(playerData);
+
+        // Configurar la fecha de nacimiento si existe
+        if (data.date_of_birth) {
+          try {
+            const parsedDate = new Date(data.date_of_birth);
+            if (!isNaN(parsedDate.getTime())) {
+              setBirthDate(parsedDate);
+              setDate(parsedDate);
+            } else {
+              console.warn('Fecha de nacimiento inválida:', data.date_of_birth);
+            }
+          } catch (dateError) {
+            console.error('Error al procesar la fecha de nacimiento:', dateError);
+          }
+        }
+
+        // Cargar la imagen si existe
+        if (data.photo_url) {
+          setTempImage(data.photo_url);
+        }
+      } catch (error) {
+        console.error('Error cargando datos del jugador:', error);
+        Alert.alert('Error', 'No se pudo cargar la información del jugador');
+      } finally {
         setLoading(false);
       }
     };
 
     loadPlayerData();
-  }, [playerId]);
+  }, [playerId, teamId]);
 
   // Redimensionar imagen para reducir su tamaño
   const resizeImage = async (uri: string, maxWidth: number, maxHeight: number, quality = 0.8) => {
@@ -398,7 +395,7 @@ export default function PlayerForm() {
     if (loading) return;
     
     try {
-      setLoading(true);
+      setSaving(true);
       
       // Validaciones básicas
       if (!formData.first_name.trim()) {
@@ -419,29 +416,85 @@ export default function PlayerForm() {
         throw new Error('El DNI debe contener entre 7 y 8 dígitos numéricos');
       }
       
-      // Validar email si se proporciona
-      if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-        throw new Error('El formato del correo electrónico no es válido');
+      // Validar y limpiar el email según la restricción de la base de datos
+      if (formData.email) {
+        const originalEmail = formData.email;
+        const email = formData.email.trim().toLowerCase();
+        
+        console.log('Email original:', originalEmail);
+        console.log('Email después de trim y lowercase:', email);
+        
+        // Validación estricta que coincide con la restricción de la base de datos
+        if (!email) {
+          console.log('Correo electrónico vacío después de trim, estableciendo a null');
+          formData.email = null;
+        } else {
+          // Validación que coincide con la restricción CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
+          // - Debe empezar con caracteres alfanuméricos, puntos, guiones bajos, porcentajes, signos más o guiones
+          // - Seguido de un símbolo @
+          // - Luego más caracteres alfanuméricos, puntos o guiones
+          // - Un punto
+          // - Y al menos dos caracteres alfabéticos (dominio de nivel superior)
+          const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+          
+          if (!emailRegex.test(email)) {
+            const errorMsg = 'El formato del correo electrónico no es válido. Debe ser como: usuario@ejemplo.com';
+            console.error(errorMsg, 'Email proporcionado:', email);
+            throw new Error(errorMsg);
+          }
+          
+          // Validar longitud máxima (255 es el estándar para emails en PostgreSQL)
+          if (email.length > 255) {
+            const errorMsg = 'El correo electrónico no puede tener más de 255 caracteres';
+            console.error(errorMsg);
+            throw new Error(errorMsg);
+          }
+          
+          console.log('Correo electrónico válido:', email);
+        }
+        
+        formData.email = email;
+      } else {
+        console.log('No se proporcionó email, se establecerá como null');
+        formData.email = null;
       }
-
+      
       // Si se está asignando un equipo, verificar que el jugador no esté ya en otro equipo
       if (formData.team_id) {
-        const { data: existingPlayer, error: playerCheckError } = await supabase
+        // Primero construimos la consulta base
+        let query = supabase
           .from('players')
           .select('id, teams (id, name)')
           .eq('dni', formData.dni.trim())
-          .not('team_id', 'is', null)
-          .neq('id', playerId || '') // Excluir al jugador actual si es una actualización
-          .single();
+          .not('team_id', 'is', null);
+          
+        // Solo añadimos la condición neq si hay un playerId
+        if (playerId) {
+          query = query.neq('id', playerId);
+        }
+        
+        // Definimos el tipo para la respuesta de la consulta
+        type PlayerWithTeam = {
+          id: string;
+          teams: {
+            id: string;
+            name: string;
+          } | null;
+        };
+        
+        // Ejecutamos la consulta
+        const { data: existingPlayers, error: playerCheckError } = await query as 
+          { data: PlayerWithTeam[] | null; error: any };
 
-        if (playerCheckError && playerCheckError.code !== 'PGRST116') { // PGRST116 = No rows returned
+        if (playerCheckError) {
+          console.error('Error al verificar jugador en equipos:', playerCheckError);
           throw new Error('Error al verificar el jugador en otros equipos');
         }
 
-        if (existingPlayer) {
-          const teamName = Array.isArray(existingPlayer.teams) && existingPlayer.teams.length > 0 
-            ? existingPlayer.teams[0].name 
-            : 'otro equipo';
+        // Verificamos si encontramos algún jugador que cumpla los criterios
+        if (existingPlayers && existingPlayers.length > 0) {
+          const existingPlayer = existingPlayers[0];
+          const teamName = existingPlayer.teams?.name || 'otro equipo';
           
           throw new Error(`Este jugador ya pertenece al equipo: ${teamName}. Un jugador no puede estar en más de un equipo a la vez.`);
         }
@@ -453,53 +506,141 @@ export default function PlayerForm() {
         photoUrl = await uploadImage(tempImage);
       }
       
+      // Validar el correo electrónico según la restricción de la base de datos
+      let processedEmail = null;
+      if (formData.email && formData.email.trim() !== '') {
+        processedEmail = formData.email.trim().toLowerCase();
+        
+        // Validación que coincide con la restricción CHECK de PostgreSQL
+        // Esta expresión es menos restrictiva que la anterior
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        
+        if (!emailRegex.test(processedEmail)) {
+          throw new Error('El formato del correo electrónico no es válido. Debe ser como: usuario@ejemplo.com');
+        }
+        
+        // Validar longitud máxima
+        if (processedEmail.length > 255) {
+          throw new Error('El correo electrónico no puede tener más de 255 caracteres');
+        }
+        
+        // Asegurarse de que el correo no tenga espacios
+        if (/\s/.test(processedEmail)) {
+          throw new Error('El correo electrónico no puede contener espacios');
+        }
+      }
+      
       // Preparar datos para guardar
       const playerData: any = {
         first_name: formData.first_name.trim(),
         last_name: formData.last_name.trim(),
         dni: formData.dni.trim(),
-        email: formData.email?.trim() || null,
+        email: processedEmail, // Será null si está vacío o el email procesado
         address: formData.address?.trim() || null,
-        position: formData.position?.trim() || null,
-        number: formData.number ? String(formData.number).trim() : null,
         team_id: formData.team_id || null,
         photo_url: photoUrl || null,
         status: formData.status || 'active',
-        // Usar birth_date que es el nombre correcto en la base de datos
-        birth_date: birthDate ? birthDate.toISOString().split('T')[0] : null,
+        date_of_birth: birthDate ? birthDate.toISOString().split('T')[0] : null,
       };
       
-      console.log('Datos a guardar:', JSON.stringify(playerData, null, 2));
+      console.log('=== DATOS A GUARDAR ===');
+      console.log(JSON.stringify(playerData, null, 2));
+      
+      console.log('=== DATOS A GUARDAR ===');
+      console.log(JSON.stringify(playerData, null, 2));
+      console.log('--- Tipos de datos ---');
+      console.log('email:', typeof playerData.email, '=>', `"${playerData.email}"`);
+      console.log('email length:', playerData.email?.length);
+      console.log('email chars:', playerData.email ? Array.from(playerData.email).map(c => `${c}(${c.charCodeAt(0)})`).join(' ') : 'null');
+      console.log('status:', typeof playerData.status, '=>', playerData.status);
+      console.log('date_of_birth:', typeof playerData.date_of_birth, '=>', playerData.date_of_birth);
+      console.log('team_id:', typeof playerData.team_id, '=>', playerData.team_id);
+      console.log('======================');
+      
+      let result;
       
       // Determinar si es creación o actualización
       if (playerId) {
         // Actualizar jugador existente
-        const { error: updateError } = await supabase
+        console.log('=== ACTUALIZANDO JUGADOR ===');
+        console.log('ID del jugador:', playerId);
+        console.log('Datos a actualizar:', JSON.stringify(playerData, null, 2));
+        
+        const { data: updateData, error: updateError } = await supabase
           .from('players')
           .update(playerData)
-          .eq('id', playerId);
-          
-        if (updateError) throw updateError;
-        Alert.alert('Éxito', 'Jugador actualizado correctamente');
+          .eq('id', playerId)
+          .select()
+          .single();
+        
+        if (updateError) {
+          console.error('Error al actualizar jugador:', updateError);
+          if (updateError.code === '23514' && updateError.message.includes('valid_email')) {
+            throw new Error('El correo electrónico no cumple con el formato requerido. Por favor, usa un formato como: usuario@ejemplo.com');
+          }
+          throw updateError;
+        }
+        
+        result = updateData;
+        console.log('Jugador actualizado exitosamente:', result);
       } else {
         // Crear nuevo jugador
-        const { error: insertError } = await supabase
+        console.log('=== CREANDO NUEVO JUGADOR ===');
+        console.log('Datos a insertar:', JSON.stringify(playerData, null, 2));
+        
+        const { data: insertData, error: insertError } = await supabase
           .from('players')
-          .insert([playerData]);
-          
-        if (insertError) throw insertError;
-        Alert.alert('Éxito', 'Jugador creado correctamente');
+          .insert([playerData])
+          .select()
+          .single();
+        
+        if (insertError) {
+          console.error('Error al crear jugador:', insertError);
+          if (insertError.code === '23514' && insertError.message.includes('valid_email')) {
+            throw new Error('El correo electrónico no cumple con el formato requerido. Por favor, usa un formato como: usuario@ejemplo.com');
+          }
+          throw insertError;
+        }
+        
+        result = insertData;
+        console.log('Jugador creado exitosamente:', result);
+      }
+
+      console.log('Jugador guardado exitosamente:', result);
+      
+      // Navegar de regreso al formulario del equipo
+      if (formData.team_id) {
+        // Usamos replace para evitar que el usuario pueda volver al formulario de jugador con el botón atrás
+        router.replace({
+          pathname: '/(admin)/TeamForm',
+          params: {
+            teamId: formData.team_id,
+            refresh: 'true',
+            timestamp: Date.now().toString()
+          }
+        } as any);
+      } else {
+        // Si por alguna razón no hay team_id, volvemos atrás
+        router.back();
       }
       
-      // Navegar de vuelta a la lista de jugadores
-      router.back();
+      // Mostrar mensaje de éxito después de la navegación
+      setTimeout(() => {
+        Alert.alert(
+          '¡Éxito!', 
+          `Jugador ${playerId ? 'actualizado' : 'creado'} correctamente`
+        );
+      }, 300);
     } catch (error) {
       console.error('Error al guardar el jugador:', error);
-      Alert.alert('Error', error instanceof Error ? error.message : 'Ocurrió un error al guardar el jugador');
+      Alert.alert(
+        'Error al guardar',
+        error instanceof Error ? error.message : 'Ocurrió un error al guardar el jugador. Por favor, inténtalo de nuevo.'
+      );
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
-  }
+  };
 
   // Definición de estilos
   const styles = StyleSheet.create({

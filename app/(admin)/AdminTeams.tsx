@@ -186,6 +186,30 @@ export default function AdminTeams() {
     fetchTeams();
   };
 
+  // Función para agrupar equipos por categoría
+  const groupTeamsByCategory = (teamsList: Team[]) => {
+    const grouped: {[key: string]: Team[]} = {};
+    
+    teamsList.forEach(team => {
+      const category = team.category_name || 'Sin categoría';
+      if (!grouped[category]) {
+        grouped[category] = [];
+      }
+      grouped[category].push(team);
+    });
+    
+    // Ordenar las categorías alfabéticamente
+    const sortedCategories = Object.keys(grouped).sort();
+    
+    // Crear un array de objetos {category, teams} ordenado
+    return sortedCategories.map(category => ({
+      category,
+      teams: grouped[category].sort((a, b) => a.name.localeCompare(b.name))
+    }));
+  };
+
+  const groupedTeams = groupTeamsByCategory(teams);
+
   if (loading && !refreshing) {
     return (
       <View style={styles.loadingContainer}>
@@ -235,67 +259,99 @@ export default function AdminTeams() {
             </Link>
           </View>
         ) : (
-          teams.map((team) => (
-            <View key={team.id} style={styles.teamCard}>
-              <View style={styles.teamInfo}>
-                {team.logo_url ? (
-                  <Image 
-                    source={{ uri: team.logo_url }} 
-                    style={styles.teamLogo} 
-                    resizeMode="contain"
-                  />
-                ) : (
-                  <View style={styles.teamLogoPlaceholder}>
-                    <Ionicons name="shield" size={24} color="#999" />
+          groupedTeams.map(({category, teams}) => (
+            <View key={category} style={styles.categorySection}>
+              <Text style={styles.categoryHeader}>{category}</Text>
+              {teams.map((team) => (
+                <View key={team.id} style={styles.teamCard}>
+                  <View style={styles.teamInfo}>
+                    {team.logo_url ? (
+                      <Image 
+                        source={{ uri: team.logo_url }} 
+                        style={styles.teamLogo} 
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <View style={styles.teamLogoPlaceholder}>
+                        <Ionicons name="shield" size={24} color="#999" />
+                      </View>
+                    )}
+                    <View style={styles.teamDetails}>
+                      <Text style={styles.teamName}>{team.name}</Text>
+                      <View style={styles.teamMeta}>
+                        <Text style={styles.teamCoach}>Entrenador: {team.coach}</Text>
+                      </View>
+                    </View>
                   </View>
-                )}
-                <View style={styles.teamDetails}>
-                  <Text style={styles.teamName}>{team.name}</Text>
-                  <View style={styles.teamMeta}>
-                    <Text style={styles.teamCategory}>{team.category_name}</Text>
-                    <Text style={styles.teamCoach}>Entrenador: {team.coach}</Text>
+                  <ImageUploader 
+                    onUpload={(imageUrl: string) => handleImageUpload(team.id, imageUrl)} 
+                    style={styles.imageUploader} 
+                  />
+                  <View style={styles.actions}>
+                    <TouchableOpacity 
+                      style={[styles.statusButton, team.is_active ? styles.activeButton : styles.inactiveButton]}
+                      onPress={() => toggleTeamStatus(team.id, team.is_active)}
+                    >
+                      <Ionicons 
+                        name={team.is_active ? 'checkmark-circle' : 'close-circle'} 
+                        size={20} 
+                        color={team.is_active ? '#4CAF50' : '#F44336'} 
+                      />
+                      <Text style={styles.statusText}>
+                        {team.is_active ? 'Activo' : 'Inactivo'}
+                      </Text>
+                    </TouchableOpacity>
+                    <Link href={`/TeamForm?teamId=${team.id}`} asChild>
+                      <TouchableOpacity style={styles.actionButton}>
+                        <Ionicons name="create-outline" size={20} color="#FF6D00" />
+                      </TouchableOpacity>
+                    </Link>
+                    <TouchableOpacity 
+                      style={[styles.actionButton, styles.deleteButton]}
+                      onPress={() => handleDeleteTeam(team.id)}
+                    >
+                      <Ionicons name="trash-outline" size={20} color="#F44336" />
+                    </TouchableOpacity>
                   </View>
                 </View>
-              </View>
-              <ImageUploader 
-                onUpload={(imageUrl: string) => handleImageUpload(team.id, imageUrl)} 
-                style={styles.imageUploader} 
-              />
-              <View style={styles.actions}>
-                <TouchableOpacity 
-                  style={[styles.statusButton, team.is_active ? styles.activeButton : styles.inactiveButton]}
-                  onPress={() => toggleTeamStatus(team.id, team.is_active)}
-                >
-                  <Ionicons 
-                    name={team.is_active ? 'checkmark-circle' : 'close-circle'} 
-                    size={20} 
-                    color={team.is_active ? '#4CAF50' : '#F44336'} 
-                  />
-                  <Text style={styles.statusText}>
-                    {team.is_active ? 'Activo' : 'Inactivo'}
-                  </Text>
-                </TouchableOpacity>
-                <Link href={`/TeamForm?teamId=${team.id}`} asChild>
-                  <TouchableOpacity style={styles.actionButton}>
-                    <Ionicons name="create-outline" size={20} color="#FF6D00" />
-                  </TouchableOpacity>
-                </Link>
-                <TouchableOpacity 
-                  style={[styles.actionButton, styles.deleteButton]}
-                  onPress={() => handleDeleteTeam(team.id)}
-                >
-                  <Ionicons name="trash-outline" size={20} color="#F44336" />
-                </TouchableOpacity>
-              </View>
+              ))}
             </View>
           ))
         )}
       </ScrollView>
+      
+      {/* Botón flotante para volver al panel de administración */}
+      <View style={styles.footer}>
+        <TouchableOpacity 
+          style={styles.backToAdminButton}
+          onPress={() => router.push('/(admin)/AdminPanelScreen')}
+        >
+          <Ionicons name="arrow-back" size={20} color="#fff" />
+          <Text style={styles.backToAdminText}>Volver al Panel</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  categorySection: {
+    marginBottom: 20,
+    backgroundColor: 'transparent',
+    borderRadius: 0,
+    overflow: 'visible',
+  },
+  categoryHeader: {
+    backgroundColor: '#121212',
+    padding: 10,
+    paddingLeft: 15,
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
+    borderRadius: 8,
+    marginBottom: 12,
+    marginHorizontal: 8,
+  },
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
@@ -330,7 +386,8 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 15,
+    padding: 8,
+    paddingTop: 15,
   },
   emptyState: {
     flex: 1,
@@ -361,17 +418,18 @@ const styles = StyleSheet.create({
   },
   teamCard: {
     backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
-    marginBottom: 15,
+    borderRadius: 12,
+    padding: 12,
+    marginHorizontal: 8,
+    marginBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   teamInfo: {
     flex: 1,
@@ -379,27 +437,32 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   teamLogo: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     marginRight: 15,
+    borderWidth: 2,
+    borderColor: '#f0f0f0',
   },
   teamLogoPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     backgroundColor: '#f0f0f0',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 15,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
   },
   teamDetails: {
     flex: 1,
   },
   teamName: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     marginBottom: 4,
+    color: '#333',
   },
   teamMeta: {
     flexDirection: 'row',
@@ -417,9 +480,9 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   teamCoach: {
-    fontSize: 12,
-    color: '#888',
-    fontStyle: 'italic',
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '500',
   },
   actions: {
     flexDirection: 'row',
@@ -452,5 +515,25 @@ const styles = StyleSheet.create({
   },
   imageUploader: {
     marginTop: 10,
+  },
+  footer: {
+    padding: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+    backgroundColor: '#fff',
+  },
+  backToAdminButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#121212',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 10,
+  },
+  backToAdminText: {
+    color: '#fff',
+    marginLeft: 8,
+    fontWeight: '500',
   },
 });

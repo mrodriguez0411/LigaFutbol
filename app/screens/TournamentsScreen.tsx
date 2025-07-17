@@ -7,7 +7,12 @@ import {
   TouchableOpacity, 
   ActivityIndicator, 
   RefreshControl,
-  ImageBackground
+  ImageBackground,
+  ImageSourcePropType,
+  useWindowDimensions,
+  ViewStyle,
+  TextStyle,
+  ImageStyle
 } from 'react-native';
 import { supabase } from '@/config/supabase';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,6 +43,11 @@ type TournamentsScreenProps = {
 };
 
 export default function TournamentsScreen({ onTournamentPress }: TournamentsScreenProps) {
+  const { width } = useWindowDimensions();
+  const isTablet = width >= 768; // Consideramos tablet a partir de 768px de ancho
+  const numColumns = isTablet ? 2 : 1; // 2 columnas en tablet, 1 en móvil
+  // Usamos numColumns en la key para forzar un nuevo renderizado cuando cambie
+  const flatListKey = `flatlist-${numColumns}`;
   const router = useRouter();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +68,10 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
   };
 
   const renderTournamentCard = ({ item }: { item: Tournament }) => {
+    const cardStyle: ViewStyle[] = [
+      styles.card as ViewStyle,
+      isTablet ? styles.tabletCard as ViewStyle : {}
+    ];
     const startDate = item.start_date ? format(new Date(item.start_date), 'd MMM yyyy', { locale: es }) : 'Sin fecha';
     const endDate = item.end_date ? format(new Date(item.end_date), 'd MMM yyyy', { locale: es }) : 'Presente';
     const teamsCount = item.teams_count || item.tournament_registrations?.length || 0;
@@ -67,7 +81,7 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
     return (
       
       <TouchableOpacity 
-        style={styles.card}
+        style={cardStyle}
         onPress={() => {
           if (onTournamentPress) {
             onTournamentPress(item);
@@ -114,50 +128,69 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
   const styles = StyleSheet.create({
     container: {
       flex: 1,
-      backgroundColor: '#f8f9fa',
-    },
-    list: {
+      backgroundColor: '#f5f5f5',
       padding: 8,
+    } as ViewStyle,
+    gridContainer: {
+      padding: 8,
+      width: '100%',
+      maxWidth: 1200, // Ancho máximo para el contenedor
+      alignSelf: 'center', // Centrar en pantallas grandes
+    },
+    columnWrapper: {
+      justifyContent: 'space-between',
+      marginBottom: 8,
     },
     card: {
-      margin: 8,
+      backgroundColor: '#fff',
       borderRadius: 12,
       overflow: 'hidden',
-      elevation: 3,
+      width: '100%', // Ocupa todo el ancho en móvil
+      maxWidth: 400, // Ancho máximo para mantener la legibilidad
+      marginBottom: 12,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.1,
       shadowRadius: 4,
-      backgroundColor: '#fff',
+      elevation: 3,
+      alignSelf: 'center', // Centrar la tarjeta en móvil
     },
+    tabletCard: {
+      width: '48%', // Ancho para tablet
+      maxWidth: '100%',
+      alignSelf: 'flex-start', // Alinear al inicio en tablet
+    } as ViewStyle,
     cardImage: {
-      height: 200,
+      width: '100%',
+      height: 350,
       justifyContent: 'flex-end',
-      backgroundColor: '#e0e0e0', // Color de fondo mientras se carga la imagen
     },
     cardImageBackground: {
-      resizeMode: 'cover',
       opacity: 0.9,
     },
     cardContent: {
-      padding: 16,
-      backgroundColor: 'rgba(0,0,0,0.5)',
+      padding: 8,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
     },
     cardTitle: {
-      fontSize: 20,
+      fontSize: 14,
       fontWeight: 'bold',
       color: '#fff',
-      marginBottom: 8,
+      marginBottom: 6,
+      textShadowColor: 'rgba(0, 0, 0, 0.75)',
+      textShadowOffset: { width: -1, height: 1 },
+      textShadowRadius: 10,
     },
     cardDetails: {
-      marginTop: 8,
+      marginTop: 4,
     },
     cardText: {
       color: '#fff',
-      fontSize: 14,
-      marginVertical: 2,
-      flexDirection: 'row',
-      alignItems: 'center',
+      fontSize: 10,
+      marginLeft: 4,
+      textShadowColor: 'rgba(0, 0, 0, 0.75)',
+      textShadowOffset: { width: -1, height: 1 },
+      textShadowRadius: 10,
     },
     loadingContainer: {
       flex: 1,
@@ -171,9 +204,8 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
       padding: 20,
     },
     emptyText: {
-      marginTop: 16,
       fontSize: 16,
-      color: '#6B7280',
+      marginTop: 16,
       textAlign: 'center',
     },
     retryButton: {
@@ -187,26 +219,6 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
       color: 'white',
       fontWeight: '600',
       textAlign: 'center',
-    },
-    gridContainer: {
-      padding: 8,
-    },
-    row: {
-      justifyContent: 'space-between',
-      paddingHorizontal: 4,
-      marginBottom: 8,
-    },
-    tournamentCard: {
-      width: '48%',
-      height: 400, // Altura reducida para mejor visualización
-      borderRadius: 12,
-      overflow: 'hidden',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.3,
-      shadowRadius: 4,
-      elevation: 3,
-      marginBottom: 12,
     },
     cardBackground: {
       flex: 1,
@@ -269,7 +281,8 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
       
       if (tournamentsError) {
         console.error('❌ Error al cargar torneos:', tournamentsError);
-        setError(`Error al cargar los torneos: ${tournamentsError.message || 'Error desconocido'}`);
+        const errorMessage = tournamentsError.message || 'Error desconocido';
+        setError(`Error al cargar los torneos: ${errorMessage}`);
         return [];
       }
       
@@ -383,6 +396,7 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
         </View>
       ) : (
         <FlatList
+          key={flatListKey}
           data={tournaments}
           keyExtractor={(item) => item.id}
           renderItem={renderTournamentCard}
@@ -394,8 +408,9 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
               tintColor="#1976d2"
             />
           }
-          contentContainerStyle={styles.list}
-          numColumns={1}
+          contentContainerStyle={styles.gridContainer}
+          numColumns={numColumns}
+          columnWrapperStyle={isTablet ? styles.columnWrapper : undefined}
         />
       )}
     </View>

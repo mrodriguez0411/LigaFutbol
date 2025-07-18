@@ -1,0 +1,424 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { 
+  View, 
+  Text, 
+  TextInput, 
+  TouchableOpacity, 
+  StyleSheet, 
+  ScrollView, 
+  Image, 
+  Alert, 
+  Platform,
+  StyleProp,
+  TextStyle,
+  ViewStyle,
+  ImageStyle,
+  Modal,
+  TouchableWithoutFeedback,
+  BackHandler,
+  ActivityIndicator
+} from 'react-native';
+import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
+import { supabase } from '@/config/supabase';
+import TeamSelector from './components/TeamSelector';
+
+type PlayerStatus = 'active' | 'suspended';
+const isWeb = Platform.OS === 'web';
+
+// Solo importamos DateTimePicker para móviles
+let DateTimePicker: any = null;
+if (!isWeb) {
+  try {
+    DateTimePicker = require('@react-native-community/datetimepicker').default;
+  } catch (error) {
+    console.warn('DateTimePicker no está disponible:', error);
+  }
+}
+
+// Tipos de datos
+interface PlayerFormData {
+  id?: string;
+  first_name: string;
+  last_name: string;
+  dni: string;
+  date_of_birth: string | null;
+  email: string | null;
+  address: string | null;
+  photo_url?: string | null;
+  team_id?: string | null;
+  number?: string | null;
+  status?: 'active' | 'suspended';
+}
+
+// Formatear fecha para mostrar (DD/MM/AAAA)
+const formatDate = (date: Date) => {
+  const day = date.getDate().toString().padStart(2, '0');
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
+export default function PlayerForm() {
+  // Obtener parámetros de la ruta
+  const { playerId, teamId } = useLocalSearchParams<{ playerId?: string; teamId?: string }>();
+  const router = useRouter();
+  const navigation = useNavigation();
+  
+  // Estados
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [formData, setFormData] = useState<PlayerFormData>({
+    first_name: '',
+    last_name: '',
+    dni: '',
+    date_of_birth: null,
+    email: null,
+    address: null,
+    team_id: teamId || null,
+    status: 'active',
+  });
+  
+  const [tempImage, setTempImage] = useState<string | null>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [date, setDate] = useState<Date>(new Date('2000-01-01'));
+  const [birthDate, setBirthDate] = useState<Date | null>(null);
+  const [formTouched, setFormTouched] = useState(false);
+
+  // Subir imagen a Supabase Storage
+  const uploadImage = async (uri: string, path: string): Promise<string> => {
+    try {
+      const response = await fetch(uri);
+      const blob = await response.blob();
+      
+      const fileExt = uri.split('.').pop();
+      const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `${path}/${fileName}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('players')
+        .upload(filePath, blob);
+      
+      if (uploadError) throw uploadError;
+      
+      const { data: { publicUrl } } = supabase.storage
+        .from('players')
+        .getPublicUrl(filePath);
+      
+      return publicUrl;
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      throw error;
+    }
+  };
+
+  // Función para verificar si el jugador es menor de 18 años
+  const isUnder18 = (): boolean => {
+    if (!birthDate) return false;
+    
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    
+    return age < 18;
+  };
+
+  // Función para manejar cambios en los inputs
+  const handleInputChange = (field: keyof PlayerFormData, value: string | null) => {
+    setFormTouched(true);
+    console.log(`Campo ${field} cambiado a:`, value);
+    
+    // Manejar campos que deben ser null cuando están vacíos
+    const processedValue = (value === '' || value === undefined) ? null : value;
+    
+    setFormData(prev => ({
+      ...prev,
+      [field]: processedValue
+    }));
+  };
+
+  // Manejar cambio de fecha
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    const currentDate = selectedDate || date;
+    setShowDatePicker(Platform.OS === 'ios');
+    
+    if (event.type !== 'dismissed') {
+      setDate(currentDate);
+      setBirthDate(currentDate);
+      
+      setFormData(prev => ({
+        ...prev,
+        date_of_birth: currentDate.toISOString().split('T')[0]
+      }));
+    }
+  };
+
+  // Cargar datos del jugador si estamos editando
+  useEffect(() => {
+    const loadPlayerData = async () => {
+      if (!playerId) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        console.log('Cargando datos del jugador con ID:', playerId);
+        
+        // Obtener datos del jugador con información del equipo si tiene
+        const { data, error } = await supabase
+          .from('players')
+          .select('*')
+          .eq('id', playerId)
+          .single();
+          
+        if (error) throw error;
+        
+        if (data) {
+          setFormData(data);
+          
+          // Establecer la fecha de nacimiento si existe
+          if (data.date_of_birth) {
+            const birthDate = new Date(data.date_of_birth);
+            setBirthDate(birthDate);
+            setDate(birthDate);
+          }
+        }
+      } catch (error) {
+        console.error('Error al cargar los datos del jugador:', error);
+        Alert.alert('Error', 'No se pudieron cargar los datos del jugador');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadPlayerData();
+  }, [playerId]);
+
+  // Guardar o actualizar jugador
+  const handleSubmit = async () => {
+    if (loading || saving) return;
+    
+    try {
+      setSaving(true);
+      
+      // Validaciones básicas
+      if (!formData.first_name?.trim()) {
+        throw new Error('El nombre es obligatorio');
+      }
+      
+      if (!formData.last_name?.trim()) {
+        throw new Error('El apellido es obligatorio');
+      }
+      
+      if (!formData.dni?.trim()) {
+        throw new Error('El DNI es obligatorio');
+      }
+      
+      // Validar formato de DNI (solo números, entre 7 y 8 dígitos)
+      const dniRegex = /^\d{7,8}$/;
+      if (!dniRegex.test(formData.dni)) {
+        throw new Error('El DNI debe contener entre 7 y 8 dígitos numéricos');
+      }
+      
+      // Validar email si existe
+      if (formData.email && formData.email.trim() !== '') {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(formData.email)) {
+          throw new Error('El formato del correo electrónico no es válido');
+        }
+        
+        if (formData.email.length > 255) {
+          throw new Error('El correo electrónico no puede tener más de 255 caracteres');
+        }
+      }
+      
+      // Subir imagen si hay una nueva
+      let photoUrl = formData.photo_url;
+      if (tempImage) {
+        photoUrl = await uploadImage(tempImage, 'player-photos');
+      }
+      
+      // Preparar datos para guardar
+      const playerData = {
+        ...formData,
+        photo_url: photoUrl,
+        updated_at: new Date().toISOString()
+      };
+      
+      // Guardar o actualizar jugador
+      let error = null;
+      
+      if (playerId) {
+        // Actualizar jugador existente
+        const { error: updateError } = await supabase
+          .from('players')
+          .update(playerData)
+          .eq('id', playerId);
+        error = updateError;
+      } else {
+        // Crear nuevo jugador
+        const { error: insertError } = await supabase
+          .from('players')
+          .insert([playerData]);
+        error = insertError;
+      }
+      
+      if (error) throw error;
+      
+      // Mostrar mensaje de éxito
+      Alert.alert(
+        'Éxito',
+        `Jugador ${playerId ? 'actualizado' : 'creado'} correctamente`,
+        [
+          {
+            text: 'Aceptar',
+            onPress: () => {
+              if (formData.team_id) {
+                router.replace({
+                  pathname: '/(admin)/TeamForm',
+                  params: { teamId: formData.team_id }
+                });
+              } else {
+                router.back();
+              }
+            }
+          }
+        ]
+      );
+      
+    } catch (error: any) {
+      console.error('Error al guardar el jugador:', error);
+      Alert.alert('Error', error.message || 'Ocurrió un error al guardar el jugador');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Función para navegar de regreso
+  const handleGoBack = useCallback(() => {
+    if (formData.team_id) {
+      // Si hay un equipo asignado, navegar al formulario del equipo
+      router.replace({
+        pathname: '/(admin)/TeamForm',
+        params: { 
+          teamId: formData.team_id, 
+          refresh: 'true',
+          timestamp: Date.now().toString() 
+        }
+      });
+    } else if (router.canGoBack()) {
+      // Si hay una pantalla en la pila de navegación, volvemos a ella
+      router.back();
+    } else {
+      // Si no hay pantalla a la que volver, navegamos a la pantalla de administración
+      router.replace('/(admin)');
+    }
+  }, [formData.team_id, router]);
+  
+  // Configurar el botón de volver en el header
+  React.useLayoutEffect(() => {
+    navigation.setOptions({
+      headerLeft: () => (
+        <TouchableOpacity 
+          onPress={handleGoBack}
+          style={{ marginLeft: 10, padding: 8 }}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Ionicons name="arrow-back" size={24} color="#000" />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation, handleGoBack]);
+
+  // Manejar el botón físico de atrás en Android
+  useEffect(() => {
+    const backAction = () => {
+      handleGoBack();
+      return true; // Evitar que el comportamiento por defecto se ejecute
+    };
+
+    const backHandler = BackHandler.addEventListener(
+      'hardwareBackPress',
+      backAction
+    );
+
+    return () => backHandler.remove();
+  }, [handleGoBack]);
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#0000ff" />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <ScrollView style={styles.scrollView}>
+        {/* Aquí iría el resto del formulario */}
+        <Text style={styles.title}>
+          {playerId ? 'Editar Jugador' : 'Nuevo Jugador'}
+        </Text>
+        
+        {/* Botón de guardar */}
+        <TouchableOpacity 
+          style={[styles.saveButton, (saving || loading) && styles.disabledButton]}
+          onPress={handleSubmit}
+          disabled={saving || loading}
+        >
+          {saving ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.saveButtonText}>
+              {playerId ? 'Actualizar' : 'Guardar'}
+            </Text>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
+  scrollView: {
+    padding: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  saveButton: {
+    backgroundColor: '#007AFF',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  disabledButton: {
+    opacity: 0.6,
+  },
+});

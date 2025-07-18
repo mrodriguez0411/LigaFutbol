@@ -625,48 +625,76 @@ export default function TeamForm() {
     }
   }, [formData, tempImage, teamId, navigation, checkInternetConnection, uploadImage]);
 
-  // Cargar categorías al iniciar
+  // Cargar datos iniciales
   useEffect(() => {
-    const loadCategories = async () => {
-      console.log('Iniciando carga de categorías...');
-      try {
-        await fetchCategories();
-        console.log('Categorías cargadas correctamente');
-      } catch (error) {
-        console.error('Error cargando categorías:', error);
-        Alert.alert('Error', 'No se pudieron cargar las categorías');
+    const loadInitialData = async () => {
+      await fetchCategories();
+      
+      if (teamId) {
+        await fetchTeam();
+        await fetchTeamPlayers(teamId);
       }
     };
+    
+    loadInitialData();
+  }, [teamId]);
 
-    loadCategories();
-  }, [fetchCategories]);
-
-  // Función para cargar los jugadores del equipo
+  // Función para cargar los jugadores del equipo con manejo de errores mejorado
   const fetchTeamPlayers = useCallback(async (teamId: string) => {
     if (!teamId) return;
     
+    console.log(`Cargando jugadores para el equipo: ${teamId}`);
+    
     try {
       setLoadingPlayers(true);
-      console.log('Fetching players for team:', teamId);
       
-      // Obtenemos los jugadores con los campos necesarios
-      const { data, error } = await supabase
+      // Primero verificamos la conexión a internet
+      const isConnected = await checkInternetConnection();
+      if (!isConnected) {
+        throw new Error('No hay conexión a internet');
+      }
+      
+      // Hacemos la consulta con un límite razonable
+      const { data, error, count } = await supabase
         .from('players')
-        .select('*')
+        .select('*', { count: 'exact' })
         .eq('team_id', teamId)
-        .order('last_name', { ascending: true });
-        
-      if (error) throw error;
+        .order('last_name', { ascending: true })
+        .limit(100); // Limitar a 100 jugadores por equipo
+
+      if (error) {
+        console.error('Error en la consulta de jugadores:', error);
+        throw new Error(`Error al cargar jugadores: ${error.message}`);
+      }
       
-      console.log('Players loaded:', data?.length || 0);
-      setPlayers(data || []);
+      console.log(`Jugadores cargados: ${data?.length || 0} de ${count}`);
+      
+      if (data && data.length > 0) {
+        setPlayers(data);
+      } else {
+        setPlayers([]);
+        console.log('No se encontraron jugadores para este equipo');
+      }
+      
+      return data;
     } catch (error) {
-      console.error('Error loading players:', error);
-      Alert.alert('Error', 'No se pudieron cargar los jugadores del equipo');
+      console.error('Error al cargar jugadores:', {
+        message: error instanceof Error ? error.message : 'Error desconocido',
+        teamId,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Mostrar un mensaje de error más descriptivo
+      const errorMessage = error instanceof Error 
+        ? error.message 
+        : 'Ocurrió un error al cargar los jugadores. Por favor, inténtalo de nuevo.';
+      
+      Alert.alert('Error', errorMessage);
+      setPlayers([]); // Limpiar la lista en caso de error
     } finally {
       setLoadingPlayers(false);
     }
-  }, []);
+  }, [checkInternetConnection]);
 
   // Cargar datos del equipo si está en modo edición
   useEffect(() => {
@@ -677,7 +705,6 @@ export default function TeamForm() {
 
     const loadTeam = async () => {
       try {
-        console.log('Fetching team data for ID:', teamId);
         const { data, error } = await supabase
           .from('teams')
           .select('*')
@@ -717,7 +744,7 @@ export default function TeamForm() {
 
     loadTeam();
   }, [teamId, fetchTeamPlayers]);
-  
+
   // Manejar la actualización cuando se navega de vuelta desde PlayerForm
   useEffect(() => {
     if (teamId) {
@@ -728,18 +755,10 @@ export default function TeamForm() {
     }
   }, [teamId, fetchTeamPlayers]);
 
-  if (loading) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#FF6D00" />
-      </View>
-    );
-  }
-
-  // Función para navegar a la pantalla de edición/creación de jugador
-
   // Función para manejar la eliminación de un jugador
-  const handleDeletePlayer = async (playerId: string, playerName: string) => {
+  const handleDeletePlayer = useCallback(async (playerId: string, playerName: string) => {
+    if (!teamId) return;
+    
     // Mostrar confirmación antes de eliminar
     Alert.alert(
       'Eliminar Jugador',
@@ -763,9 +782,7 @@ export default function TeamForm() {
               if (error) throw error;
               
               // Actualizar la lista de jugadores
-              if (teamId) {
-                await fetchTeamPlayers(teamId);
-              }
+              await fetchTeamPlayers(teamId);
               
               Alert.alert('Éxito', 'Jugador eliminado correctamente');
             } catch (error) {
@@ -779,10 +796,10 @@ export default function TeamForm() {
       ],
       { cancelable: true }
     );
-  };
+  }, [teamId, fetchTeamPlayers]);
 
   // Función para manejar la suspensión de un jugador
-  const handleSuspendPlayer = (playerId: string) => {
+  const handleSuspendPlayer = useCallback((playerId: string) => {
     // TODO: Implementar lógica de suspensión
     Alert.alert(
       'Suspender Jugador',
@@ -794,8 +811,17 @@ export default function TeamForm() {
         },
       ]
     );
-  };
+  }, []);
 
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#FF6D00" />
+      </View>
+    );
+  }
+
+  // Función para navegar a la pantalla de edición/creación de jugador
   const navigateToPlayerForm = (playerId?: string) => {
     if (!teamId) return;
     

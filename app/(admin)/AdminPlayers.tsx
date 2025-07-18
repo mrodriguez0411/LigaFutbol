@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Image, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Image, ActivityIndicator, RefreshControl, TextInput } from 'react-native';
 import { supabase } from '@/config/supabase';
-import { useRouter } from 'expo-router';
+import { useRouter, Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 // Función auxiliar para calcular la edad
@@ -25,6 +25,14 @@ type Team = {
 
 type PlayerStatus = 'active' | 'suspended';
 
+interface Suspension {
+  id: string;
+  start_date: string;
+  days_count: number;
+  reason: string;
+  active: boolean;
+}
+
 type Player = {
   id: string;
   first_name: string;
@@ -40,68 +48,110 @@ type Player = {
   age?: number | null;
   team_name?: string;
   status?: PlayerStatus;
+  suspensions?: Suspension[];
 };
 
 export default function AdminPlayers() {
   const router = useRouter();
   const [players, setPlayers] = useState<Player[]>([]);
+  const [filteredPlayers, setFilteredPlayers] = useState<Player[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
-  // Cargar jugadores con información de equipos usando LEFT JOIN para incluir jugadores sin equipo
+  // Cargar jugadores con información de equipos
   const loadPlayers = async () => {
     try {
       setLoading(true);
       
-      // Obtenemos los jugadores con la información del equipo (si existe)
-      const { data, error } = await supabase
+      // Primero obtenemos todos los equipos
+      const { data: teamsData, error: teamsError } = await supabase
+        .from('teams')
+        .select('id, name');
+        
+      if (teamsError) throw teamsError;
+      
+      // Luego obtenemos todos los jugadores
+      const { data: playersData, error: playersError } = await supabase
         .from('players')
-        .select(`
-          *,
-          teams!left (id, name)
-        `)
+        .select('*')
         .order('last_name', { ascending: true });
         
-      if (error) throw error;
+      if (playersError) throw playersError;
       
-      console.log('Jugadores cargados:', data); // Debug
+      // Obtenemos las suspensiones activas
+      const { data: suspensionsData, error: suspensionsError } = await supabase
+        .from('player_suspensions')
+        .select('*')
+        .eq('active', true);
+        
+      if (suspensionsError) throw suspensionsError;
+        
+      console.log('Jugadores cargados:', playersData); // Debug
       
       // Procesar datos para incluir la edad y el nombre del equipo
-      const processedPlayers = data.map(player => {
+      const processedPlayers = (playersData || []).map((player) => {
+        // Encontrar el equipo del jugador
+        const playerTeam = teamsData?.find(team => team.id === player.team_id);
+        
+        console.log('Procesando jugador:', {
+          id: player.id,
+          nombre: `${player.first_name} ${player.last_name}`,
+          team_id: player.team_id,
+          team_name: playerTeam?.name || 'Sin equipo'
+        });
         // Calcular edad si hay fecha de nacimiento
         const age = player.birth_date ? calculateAge(player.birth_date) : null;
         
-        // Obtener el nombre del equipo o 'Sin equipo' si no tiene
-        const teamName = Array.isArray(player.teams) && player.teams.length > 0 
-          ? player.teams[0].name 
-          : 'Sin equipo';
+        // Crear objeto de equipo si existe
+        const team = playerTeam ? {
+          id: playerTeam.id,
+          name: playerTeam.name
+        } : null;
         
-        const teamId = Array.isArray(player.teams) && player.teams.length > 0 
-          ? player.teams[0].id 
-          : null;
+        // Obtener suspensiones activas del jugador
+        const playerSuspensions = (suspensionsData || []).filter((s: any) => s.player_id === player.id);
         
         console.log('Procesando jugador:', { 
           id: player.id, 
           name: `${player.first_name} ${player.last_name}`, 
-          teamId,
-          teamName 
+          teamId: team?.id || null,
+          teamName: team?.name || 'Sin equipo'
         });
         
         return {
           ...player,
           age,
-          team_id: teamId,
-          team_name: teamName,
-          // Asegurarse de que teams sea un objeto o null para evitar errores
-          teams: Array.isArray(player.teams) && player.teams.length > 0 ? player.teams[0] : null
+          team_id: team?.id || null,
+          team_name: team?.name || 'Sin equipo',
+          teams: team,
+          status: playerSuspensions.length > 0 ? 'suspended' : 'active',
+          suspensions: playerSuspensions
         };
       });
       
       console.log('Jugadores procesados:', processedPlayers); // Debug
       setPlayers(processedPlayers);
+      // Aplicar el filtro actual a los nuevos datos
+      if (searchTerm) {
+        const searchTermLower = searchTerm.toLowerCase();
+        const filtered = processedPlayers.filter(player => {
+          const fullName = `${player.first_name} ${player.last_name}`.toLowerCase();
+          const dni = player.dni ? player.dni.toLowerCase() : '';
+          return fullName.includes(searchTermLower) || dni.includes(searchTermLower);
+        });
+        setFilteredPlayers(filtered);
+      } else {
+        setFilteredPlayers(processedPlayers);
+      }
     } catch (error) {
       console.error('Error loading players:', error);
       Alert.alert('Error', 'No se pudieron cargar los jugadores');
+      setPlayers([]);
+      setFilteredPlayers([]);
+      setLoading(false);
+      setRefreshing(false);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -158,16 +208,79 @@ export default function AdminPlayers() {
     );
   }
 
+  // Función para manejar la búsqueda
+  const handleSearch = (text: string) => {
+    setSearchTerm(text);
+    if (text === '') {
+      setFilteredPlayers(players);
+    } else {
+      const searchTermLower = text.toLowerCase();
+      const filtered = players.filter(player => {
+        const fullName = `${player.first_name} ${player.last_name}`.toLowerCase();
+        const dni = player.dni ? player.dni.toLowerCase() : '';
+        return fullName.includes(searchTermLower) || dni.includes(searchTermLower);
+      });
+      setFilteredPlayers(filtered);
+    }
+  };
+
+  // Función para limpiar la búsqueda
+  const clearSearch = () => {
+    setSearchTerm('');
+    setFilteredPlayers(players);
+    setIsSearchFocused(false);
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Jugadores</Text>
+        <View style={styles.headerLeft}>
+          <Link href="/(admin)/AdminPanelScreen" asChild>
+            <TouchableOpacity style={styles.backButton}>
+              <Ionicons name="arrow-back" size={24} color="#FF6D00" />
+            </TouchableOpacity>
+          </Link>
+          <Text style={styles.title}>Jugadores</Text>
+        </View>
         <TouchableOpacity 
           style={styles.addButton}
-          onPress={() => router.push({ pathname: '/(admin)/PlayerForm', params: { playerId: undefined } })}
+          onPress={() => router.push('/(admin)/PlayerForm')}
         >
-          <Ionicons name="add" size={24} color="white" />
+          <Ionicons name="person-add" size={24} color="#fff" />
         </TouchableOpacity>
+      </View>
+
+      <View style={[styles.searchContainer, isSearchFocused && styles.searchContainerFocused]}>
+        <TouchableOpacity 
+          onPress={() => setIsSearchFocused(true)}
+          style={styles.searchIconContainer}
+        >
+          <Ionicons name="search" size={22} color="#FF6D00" />
+        </TouchableOpacity>
+        {isSearchFocused ? (
+          <>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Buscar jugador..."
+              value={searchTerm}
+              onChangeText={handleSearch}
+              placeholderTextColor="#999"
+              autoFocus
+            />
+            {searchTerm.length > 0 && (
+              <TouchableOpacity onPress={clearSearch} style={styles.clearButton}>
+                <Ionicons name="close-circle" size={20} color="#999" />
+              </TouchableOpacity>
+            )}
+          </>
+        ) : (
+          <TouchableOpacity 
+            style={styles.searchPlaceholder}
+            onPress={() => setIsSearchFocused(true)}
+          >
+            <Text style={styles.searchPlaceholderText}>Buscar jugador...</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <ScrollView 
@@ -183,12 +296,14 @@ export default function AdminPlayers() {
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#FF6D00" />
           </View>
-        ) : players.length === 0 ? (
+        ) : filteredPlayers.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No hay jugadores registrados</Text>
+            <Text style={styles.emptyText}>
+              {searchTerm ? 'No se encontraron jugadores' : 'No hay jugadores registrados'}
+            </Text>
           </View>
         ) : (
-          players.map((player) => (
+          filteredPlayers.map((player) => (
             <View 
               key={player.id} 
               style={[
@@ -225,10 +340,23 @@ export default function AdminPlayers() {
                         </Text>
                       </View>
                     </View>
+                    <Text style={styles.playerDni}>
+                      {player.dni || 'Sin DNI'}
+                    </Text>
                     <Text style={styles.playerMeta}>
                       {player.team_name || 'Sin equipo'}
                       {player.age !== null && ` • ${player.age} años`}
                     </Text>
+                    {player.status === 'suspended' && player.suspensions && player.suspensions.length > 0 && (
+                      <View style={styles.suspensionInfo}>
+                        <Text style={styles.suspensionText}>
+                          Suspendido por {player.suspensions[0].days_count} fecha{player.suspensions[0].days_count !== 1 ? 's' : ''} • {player.suspensions[0].reason}
+                        </Text>
+                        <Text style={styles.suspensionDate}>
+                          Desde: {new Date(player.suspensions[0].start_date).toLocaleDateString()}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                   <Ionicons name="chevron-forward" size={24} color="#999" />
                 </TouchableOpacity>
@@ -257,28 +385,31 @@ export default function AdminPlayers() {
   );
 }
 
+// Definir el tipo para los estilos
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 15,
+    padding: 16,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
-    borderBottomColor: '#eee',
+    borderBottomColor: '#e0e0e0',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  backButton: {
+    marginRight: 12,
+    padding: 4,
   },
   title: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#333',
   },
@@ -290,11 +421,61 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    margin: 16,
+    paddingHorizontal: 12,
+    height: 48,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  searchContainerFocused: {
+    borderWidth: 1,
+    borderColor: '#FF6D00',
+  },
+  searchIconContainer: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    height: '100%',
+    color: '#333',
+    fontSize: 16,
+    paddingVertical: 0,
+  },
+  searchPlaceholder: {
+    flex: 1,
+    height: '100%',
+    justifyContent: 'center',
+    paddingLeft: 8,
+  },
+  searchPlaceholderText: {
+    color: '#999',
+    fontSize: 16,
+  },
+  clearButton: {
+    padding: 8,
+    marginLeft: 4,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#fff',
+  },
   scrollView: {
     flex: 1,
     padding: 15,
   },
   emptyState: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 40,
@@ -305,52 +486,84 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: '#666',
+    textAlign: 'center',
     marginTop: 10,
     marginBottom: 20,
-    textAlign: 'center',
-  },
-  addFirstButton: {
-    backgroundColor: '#FF6D00',
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 8,
-  },
-  addFirstButtonText: {
-    color: '#fff',
-    fontWeight: '600',
-    fontSize: 16,
   },
   playerCard: {
     backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 15,
+    borderRadius: 8,
+    padding: 12,
+    margin: 8,
     marginBottom: 12,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 3,
+    shadowRadius: 2,
     elevation: 2,
   },
   suspendedPlayerCard: {
-    opacity: 0.7,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: '#fff8f8',
+    borderLeftWidth: 4,
+    borderLeftColor: '#ff6b6b',
+  },
+  playerInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  playerInfoContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  playerImage: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 15,
+    backgroundColor: '#e0e0e0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarPlaceholder: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 15,
+    backgroundColor: '#e0e0e0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  playerDetails: {
+    flex: 1,
   },
   playerHeader: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 4,
   },
-  statusBadge: {
-    marginLeft: 8,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
+  playerName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+    marginBottom: 4,
+  },
+  playerDni: {
+    fontSize: 12,
+    color: '#888',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  playerMeta: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
   },
   statusActive: {
-    backgroundColor: '#e8f5e9',
+    backgroundColor: '#e6f7e6',
   },
   statusSuspended: {
     backgroundColor: '#ffebee',
@@ -360,20 +573,29 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
   },
-  playerInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-    justifyContent: 'space-between',
+  suspensionInfo: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#FFF8E1',
+    borderRadius: 4,
+    borderLeftWidth: 3,
+    borderLeftColor: '#FFA000',
   },
-  playerInfoContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
+  suspensionText: {
+    fontSize: 13,
+    color: '#5D4037',
+    fontWeight: '500',
+  },
+  suspensionDate: {
+    fontSize: 12,
+    color: '#8D6E63',
+    marginTop: 2,
+    fontStyle: 'italic',
   },
   actionsContainer: {
     flexDirection: 'row',
-    marginLeft: 10,
+    justifyContent: 'flex-end',
+    marginTop: 8,
   },
   actionButton: {
     width: 36,
@@ -388,35 +610,6 @@ const styles = StyleSheet.create({
   },
   deleteButton: {
     backgroundColor: '#F44336',
-  },
-  playerImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginRight: 15,
-  },
-  avatarPlaceholder: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#f0f0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 15,
-  },
-  playerDetails: {
-    flex: 1,
-  },
-  playerName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
-  },
-  playerMeta: {
-    fontSize: 13,
-    color: '#666',
-    marginBottom: 2,
   },
   // Los estilos de actions, editButton y deleteButton ya están definidos arriba
 });

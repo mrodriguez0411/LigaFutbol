@@ -78,14 +78,15 @@ export default function PlayerForm() {
   const router = useRouter();
   const { playerId, teamId } = useLocalSearchParams<{ playerId?: string; teamId?: string }>();
   
-  // Función para navegar de regreso a la lista de jugadores
+  // Función para navegar de regreso a la pantalla anterior
   const goBackToPlayers = useCallback(() => {
-    if (navigation.canGoBack()) {
-      navigation.goBack();
+    if (router.canGoBack()) {
+      router.back();
     } else {
+      // Si no hay historial de navegación, redirigir a la lista de jugadores
       router.replace('/(admin)/players');
     }
-  }, [navigation, router]);
+  }, [router]);
   
   // Estados del formulario
   const [loading, setLoading] = useState(true);

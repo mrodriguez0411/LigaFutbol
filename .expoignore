@@ -1,3 +1,5 @@
 hooks/**
 **/*.ts
 **/*.web.ts
+app/utils/
+assets/

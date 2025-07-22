@@ -30,7 +30,6 @@ module.exports = function (api) {
           '@hooks': './app/hooks',
           '@screens': './app/screens',
           '@types': './app/types',
-          '@utils': './app/utils',
           '@assets': './assets',
         },
       }],

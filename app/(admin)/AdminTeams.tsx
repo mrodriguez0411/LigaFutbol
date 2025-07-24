@@ -1,9 +1,9 @@
 import { ImageUploader } from '@/components/ImageUploader'; // Importar el componente ImageUploader
 import { supabase } from '@/config/supabase';
 import { Ionicons } from '@expo/vector-icons';
-import { Link, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Link, useRouter, useFocusEffect } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Image, RefreshControl, ScrollView, StyleSheet, Text, TouchableOpacity, View, TextInput, Modal } from 'react-native';
 
 interface Team {
   id: string;
@@ -24,18 +24,55 @@ interface Team {
 
 export default function AdminTeams() {
   const [teams, setTeams] = useState<Team[]>([]);
+  const [categories, setCategories] = useState<{id: string, name: string}[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [expandedCategories, setExpandedCategories] = useState<{[key: string]: boolean}>({});
+  const [categoriesMap, setCategoriesMap] = useState<{[name: string]: string}>({});
   const router = useRouter();
+  
+  const toggleCategory = (categoryId: string) => {
+    setExpandedCategories(prev => ({
+      ...prev,
+      [categoryId]: !prev[categoryId]
+    }));
+  };
 
+  // Fetch data when component mounts
   useEffect(() => {
     fetchTeams();
   }, []);
+  
+  // Refresh data when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchTeams();
+    }, [])
+  );
 
   const fetchTeams = async () => {
     try {
       setLoading(true);
-      // Primero obtenemos los equipos con solo los campos básicos
+      
+      // Primero obtenemos todas las categorías
+      const { data: categoriesData, error: categoriesError } = await supabase
+        .from('categories')
+        .select('id, name')
+        .order('name');
+        
+      if (categoriesError) throw categoriesError;
+      setCategories(categoriesData || []);
+      
+      // Crear un mapa de nombres de categoría a IDs
+      if (categoriesData) {
+        const map: {[name: string]: string} = {};
+        categoriesData.forEach(cat => {
+          map[cat.name] = cat.id;
+        });
+        setCategoriesMap(map);
+      }
+      
+      // Luego obtenemos todos los equipos
       const { data: teamsData, error: teamsError } = await supabase
         .from('teams')
         .select('*')
@@ -43,35 +80,12 @@ export default function AdminTeams() {
 
       if (teamsError) throw teamsError;
       
-      // Obtenemos los IDs únicos de categorías (si existen)
-      const categoryIds = teamsData && teamsData.length > 0 
-        ? [...new Set(teamsData.map(team => team.category_id).filter(Boolean))]
-        : [];
-      
-      // Obtenemos los nombres de las categorías si hay categorías
-      let categoriesMap = new Map();
-      if (categoryIds.length > 0) {
-        try {
-          const { data: categoriesData, error: categoriesError } = await supabase
-            .from('categories')
-            .select('id, name')
-            .in('id', categoryIds);
-            
-          if (categoriesError) {
-            console.warn('Error al cargar categorías:', categoriesError);
-          } else if (categoriesData) {
-            // Creamos un mapa de ID de categoría a nombre
-            categoriesMap = new Map(categoriesData.map(cat => [cat.id, cat.name]));
-          }
-        } catch (error) {
-          console.error('Error al cargar categorías:', error);
-        }
-      }
-
       // Mapear los datos para incluir el nombre de la categoría
       const formattedTeams = (teamsData || []).map(team => {
-        // Aseguramos que todos los campos requeridos tengan un valor por defecto
-        const formattedTeam = {
+        // Encontrar la categoría del equipo
+        const teamCategory = categoriesData?.find(cat => cat.id === team.category_id);
+        
+        return {
           id: team.id || '',
           name: team.name || 'Equipo sin nombre',
           logo_url: team.logo_url || null,
@@ -81,19 +95,12 @@ export default function AdminTeams() {
           colors: team.colors || '#000000',
           is_active: team.is_active !== undefined ? team.is_active : true,
           category_id: team.category_id || null,
-          category_name: 'Sin categoría',
+          category_name: teamCategory?.name || 'Sin categoría',
           created_at: team.created_at || new Date().toISOString(),
           updated_at: team.updated_at || new Date().toISOString(),
           createdAt: team.created_at || new Date().toISOString(),
           updatedAt: team.updated_at || new Date().toISOString()
         };
-
-        // Si hay un category_id válido, intentamos obtener el nombre de la categoría
-        if (team.category_id && categoriesMap.has(team.category_id)) {
-          formattedTeam.category_name = categoriesMap.get(team.category_id);
-        }
-
-        return formattedTeam;
       });
 
       setTeams(formattedTeams);
@@ -186,10 +193,32 @@ export default function AdminTeams() {
     fetchTeams();
   };
 
+  const handleAddTeam = (categoryName: string) => {
+    const categoryId = categoriesMap[categoryName];
+    if (!categoryId) return;
+    
+    // Navegar a TeamForm con el ID de la categoría como parámetro
+    router.push({
+      pathname: '/(admin)/TeamForm',
+      params: { categoryId }
+    });
+  };
+
   // Función para agrupar equipos por categoría
   const groupTeamsByCategory = (teamsList: Team[]) => {
     const grouped: {[key: string]: Team[]} = {};
     
+    // Primero agregamos todas las categorías, incluso si no tienen equipos
+    categories.forEach(category => {
+      grouped[category.name] = [];
+    });
+    
+    // Agregamos 'Sin categoría' para equipos sin categoría
+    if (!grouped['Sin categoría']) {
+      grouped['Sin categoría'] = [];
+    }
+    
+    // Agregamos los equipos a sus categorías
     teamsList.forEach(team => {
       const category = team.category_name || 'Sin categoría';
       if (!grouped[category]) {
@@ -198,22 +227,18 @@ export default function AdminTeams() {
       grouped[category].push(team);
     });
     
-    // Ordenar las categorías alfabéticamente
-    const sortedCategories = Object.keys(grouped).sort();
-    
-    // Crear un array de objetos {category, teams} ordenado
-    return sortedCategories.map(category => ({
-      category,
-      teams: grouped[category].sort((a, b) => a.name.localeCompare(b.name))
-    }));
+    return grouped;
   };
 
   const groupedTeams = groupTeamsByCategory(teams);
 
-  if (loading && !refreshing) {
+  // Ordenar las categorías alfabéticamente
+  const sortedCategories = Object.keys(groupedTeams).sort((a, b) => a.localeCompare(b));
+
+  if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#FF6D00" />
+        <ActivityIndicator size="large" color="#0000ff" />
       </View>
     );
   }
@@ -224,7 +249,7 @@ export default function AdminTeams() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Gestionar Equipos</Text>
+        <Text style={styles.headerTitle}>Gestión de Equipos</Text>
         <Link href="/(admin)/TeamForm" asChild>
           <TouchableOpacity style={styles.addButton}>
             <Ionicons name="add" size={24} color="#fff" />
@@ -235,101 +260,124 @@ export default function AdminTeams() {
       <ScrollView 
         style={styles.content}
         refreshControl={
-          <ScrollView
-            refreshControl={
-              <RefreshControl
-                refreshing={refreshing}
-                onRefresh={onRefresh}
-                colors={['#FF6D00']}
-                tintColor="#FF6D00"
-              />
-            }
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {teams.length === 0 ? (
+        {sortedCategories.length === 0 ? (
           <View style={styles.emptyState}>
             <Ionicons name="people-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyStateText}>No hay equipos registrados</Text>
-            <Link href="/(admin)/TeamForm" asChild>
-              <TouchableOpacity style={styles.addButtonLarge}>
-                <Ionicons name="add" size={20} color="#fff" />
-                <Text style={styles.addButtonText}>Agregar Equipo</Text>
-              </TouchableOpacity>
-            </Link>
+            <Text style={styles.emptyStateText}>No hay categorías registradas</Text>
           </View>
         ) : (
-          groupedTeams.map(({category, teams}) => (
-            <View key={category} style={styles.categorySection}>
-              <Text style={styles.categoryHeader}>{category}</Text>
-              {teams.map((team) => (
-                <View key={team.id} style={styles.teamCard}>
-                  <View style={styles.teamInfo}>
-                    {team.logo_url ? (
-                      <Image 
-                        source={{ uri: team.logo_url }} 
-                        style={styles.teamLogo} 
-                        resizeMode="contain"
-                      />
-                    ) : (
-                      <View style={styles.teamLogoPlaceholder}>
-                        <Ionicons name="shield" size={24} color="#999" />
-                      </View>
-                    )}
-                    <View style={styles.teamDetails}>
-                      <Text style={styles.teamName}>{team.name}</Text>
-                      <View style={styles.teamMeta}>
-                        <Text style={styles.teamCoach}>Entrenador: {team.coach}</Text>
-                      </View>
-                    </View>
+          sortedCategories.map((category) => {
+            const categoryTeams = groupedTeams[category] || [];
+            const isExpanded = expandedCategories[category] !== false; // Default expanded
+            
+            return (
+              <View key={category} style={styles.categorySection}>
+                <TouchableOpacity 
+                  style={styles.categoryHeader} 
+                  onPress={() => toggleCategory(category)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.categoryHeaderContent}>
+                    <Text style={styles.categoryTitle}>{category}</Text>
+                    <Text style={styles.teamCount}>
+                      ({categoryTeams.length} {categoryTeams.length === 1 ? 'equipo' : 'equipos'})
+                    </Text>
                   </View>
-                  <ImageUploader 
-                    onUpload={(imageUrl: string) => handleImageUpload(team.id, imageUrl)} 
-                    style={styles.imageUploader} 
+                  <Ionicons 
+                    name={isExpanded ? 'chevron-up' : 'chevron-down'} 
+                    size={20} 
+                    color="#666" 
                   />
-                  <View style={styles.actions}>
+                </TouchableOpacity>
+                
+                {isExpanded && (
+                  <View style={styles.teamsContainer}>
                     <TouchableOpacity 
-                      style={[styles.statusButton, team.is_active ? styles.activeButton : styles.inactiveButton]}
-                      onPress={() => toggleTeamStatus(team.id, team.is_active)}
+                      style={styles.addTeamButton}
+                      onPress={() => handleAddTeam(category)}
                     >
-                      <Ionicons 
-                        name={team.is_active ? 'checkmark-circle' : 'close-circle'} 
-                        size={20} 
-                        color={team.is_active ? '#4CAF50' : '#F44336'} 
-                      />
-                      <Text style={styles.statusText}>
-                        {team.is_active ? 'Activo' : 'Inactivo'}
-                      </Text>
+                      <Ionicons name="add-circle-outline" size={20} color="#4CAF50" />
+                      <Text style={styles.addTeamButtonText}>Agregar Equipo</Text>
                     </TouchableOpacity>
-                    <Link href={`/TeamForm?teamId=${team.id}`} asChild>
-                      <TouchableOpacity style={styles.actionButton}>
-                        <Ionicons name="create-outline" size={20} color="#FF6D00" />
-                      </TouchableOpacity>
-                    </Link>
-                    <TouchableOpacity 
-                      style={[styles.actionButton, styles.deleteButton]}
-                      onPress={() => handleDeleteTeam(team.id)}
-                    >
-                      <Ionicons name="trash-outline" size={20} color="#F44336" />
-                    </TouchableOpacity>
+                    
+                    {categoryTeams.length === 0 ? (
+                      <View style={styles.emptyCategory}>
+                        <Ionicons name="alert-circle-outline" size={24} color="#999" />
+                        <Text style={styles.emptyCategoryText}>Sin equipos en esta categoría</Text>
+                      </View>
+                    ) : (
+                      categoryTeams.map((team) => (
+                        <View key={team.id} style={styles.teamCard}>
+                          <View style={styles.teamInfo}>
+                            {team.logo_url ? (
+                              <Image 
+                                source={{ uri: team.logo_url }} 
+                                style={styles.teamLogo}
+                                resizeMode="contain"
+                              />
+                            ) : (
+                              <View style={styles.teamLogoPlaceholder}>
+                                <Ionicons name="shirt-outline" size={24} color="#999" />
+                              </View>
+                            )}
+                            <View style={styles.teamDetails}>
+                              <Text style={styles.teamName}>{team.name}</Text>
+                              <Text style={styles.teamMeta}>
+                                {team.coach} • {team.stadium}
+                              </Text>
+                            </View>
+                          </View>
+                          <View style={styles.teamActions}>
+                            <TouchableOpacity 
+                              style={[styles.statusButton, team.is_active ? styles.activeButton : styles.inactiveButton]}
+                              onPress={() => toggleTeamStatus(team.id, team.is_active)}
+                            >
+                              <Ionicons 
+                                name={team.is_active ? 'checkmark-circle' : 'close-circle'} 
+                                size={20} 
+                                color={team.is_active ? '#4CAF50' : '#F44336'} 
+                              />
+                              <Text style={styles.statusText}>
+                                {team.is_active ? 'Activo' : 'Inactivo'}
+                              </Text>
+                            </TouchableOpacity>
+                            <Link href={`/(admin)/TeamForm?id=${team.id}`} asChild>
+                              <TouchableOpacity style={styles.editButton}>
+                                <Ionicons name="create-outline" size={20} color="#FF6D00" />
+                              </TouchableOpacity>
+                            </Link>
+                            <TouchableOpacity 
+                              style={styles.deleteButton}
+                              onPress={() => handleDeleteTeam(team.id)}
+                            >
+                              <Ionicons name="trash-outline" size={20} color="#F44336" />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))
+                    )}
                   </View>
-                </View>
-              ))}
-            </View>
-          ))
+                )}
+              </View>
+            );
+          })
         )}
       </ScrollView>
       
-      {/* Botón flotante para volver al panel de administración */}
-      <View style={styles.footer}>
+      <View style={styles.backButtonContainer}>
         <TouchableOpacity 
-          style={styles.backToAdminButton}
-          onPress={() => router.push('/(admin)/AdminPanelScreen')}
+          style={styles.backButton} 
+          onPress={() => router.back()}
         >
           <Ionicons name="arrow-back" size={20} color="#fff" />
           <Text style={styles.backToAdminText}>Volver al Panel</Text>
         </TouchableOpacity>
       </View>
+      
+
     </View>
   );
 }
@@ -371,7 +419,13 @@ const styles = StyleSheet.create({
     paddingTop: 50,
   },
   backButton: {
-    padding: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FF6D00',
+    padding: 12,
+    borderRadius: 8,
+    margin: 16,
   },
   headerTitle: {
     color: '#fff',
@@ -384,6 +438,27 @@ const styles = StyleSheet.create({
   addButton: {
     padding: 5,
   },
+  backToAdminText: {
+    color: '#fff',
+    marginLeft: 8,
+    fontWeight: '600',
+  },
+  addTeamButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E8F5E9',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#C8E6C9',
+  },
+  addTeamButtonText: {
+    marginLeft: 8,
+    color: '#2E7D32',
+    fontWeight: '600',
+  },
   content: {
     flex: 1,
     padding: 8,
@@ -395,6 +470,64 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     marginTop: 50,
+  },
+  categoryHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flex: 1,
+  },
+  categoryTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FF6D00', // Changed to orange
+  },
+  teamCount: {
+    fontSize: 14,
+    color: '#666',
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  teamsContainer: {
+    marginTop: 8,
+    paddingHorizontal: 8,
+  },
+  emptyCategory: {
+    backgroundColor: '#f9f9f9',
+    padding: 12,
+    borderRadius: 8,
+    marginVertical: 8,
+    alignItems: 'center',
+  },
+  emptyCategoryText: {
+    color: '#888',
+    fontStyle: 'italic',
+  },
+  teamActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  editButton: {
+    padding: 6,
+    borderRadius: 20,
+    backgroundColor: '#FFF3E0',
+  },
+  backButtonContainer: {
+    padding: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FF6D00',
+    padding: 12,
+    borderRadius: 8,
   },
   emptyStateText: {
     fontSize: 16,

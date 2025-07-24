@@ -1,33 +1,20 @@
 {
+  "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "jsx": "react-native",
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./app/*"
-      ],
-      "@app/*": [
-        "./app/*"
-      ],
-      "@components/*": [
-        "./app/components/*"
-      ],
-      "@contexts/*": [
-        "./app/contexts/*"
-      ],
-      "@hooks/*": [
-        "./app/hooks/*"
-      ],
-      "@screens/*": [
-        "./app/screens/*"
-      ],
-      "@types/*": [
-        "./app/types/*"
-      ],
-
-      "@assets/*": [
-        "./assets/*"
-      ]
+      "@/*": ["./app/*"],
+      "@app/*": ["./app/*"],
+      "@components/*": ["./app/components/*"],
+      "@contexts/*": ["./app/contexts/*"],
+      "@hooks/*": ["./app/hooks/*"],
+      "@screens/*": ["./app/screens/*"],
+      "@types/*": ["./app/types/*"],
+      "@assets/*": ["./assets/*"]
     },
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,

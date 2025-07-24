@@ -118,25 +118,40 @@ export default function AdminTournaments() {
                 </View>
               </View>
               <View style={styles.actions}>
-                <TouchableOpacity 
-                  style={[styles.statusButton, tournament.is_active ? styles.activeButton : styles.inactiveButton]}
-                  onPress={() => toggleTournamentStatus(tournament.id, tournament.is_active)}
-                >
-                  <Ionicons 
-                    name={tournament.is_active ? 'checkmark-circle' : 'close-circle'} 
-                    size={20} 
-                    color={tournament.is_active ? '#4CAF50' : '#F44336'} 
-                  />
-                  <Text style={styles.statusText}>
-                    {tournament.is_active ? 'Activo' : 'Inactivo'}
-                  </Text>
-                </TouchableOpacity>
-                
-                <Link href={`/(admin)/TournamentForm?id=${tournament.id}`} asChild>
-                  <TouchableOpacity style={styles.editButton}>
-                    <Ionicons name="create-outline" size={20} color="#FF6D00" />
+                <View style={styles.leftActions}>
+                  <TouchableOpacity 
+                    style={[styles.statusButton, tournament.is_active ? styles.activeButton : styles.inactiveButton]}
+                    onPress={() => toggleTournamentStatus(tournament.id, tournament.is_active)}
+                  >
+                    <Ionicons 
+                      name={tournament.is_active ? 'checkmark-circle' : 'close-circle'} 
+                      size={20} 
+                      color={tournament.is_active ? '#4CAF50' : '#F44336'} 
+                    />
+                    <Text style={styles.statusText}>
+                      {tournament.is_active ? 'Activo' : 'Inactivo'}
+                    </Text>
                   </TouchableOpacity>
-                </Link>
+                </View>
+                
+                <View style={styles.rightActions}>
+                  <TouchableOpacity 
+                    style={styles.fixtureButton}
+                    onPress={() => router.push({
+                      pathname: "/(admin)/fixture/[id]",
+                      params: { id: tournament.id }
+                    })}
+                  >
+                    <Ionicons name="calendar-outline" size={18} color="#1976D2" />
+                    <Text style={styles.fixtureButtonText}>Ver Fixture</Text>
+                  </TouchableOpacity>
+                  
+                  <Link href={`/(admin)/TournamentForm?id=${tournament.id}`} asChild>
+                    <TouchableOpacity style={styles.editButton}>
+                      <Ionicons name="create-outline" size={20} color="#FF6D00" />
+                    </TouchableOpacity>
+                  </Link>
+                </View>
               </View>
             </View>
           ))
@@ -214,9 +229,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderRadius: 10,
     padding: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     marginBottom: 15,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -225,9 +237,9 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   tournamentInfo: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 8,
   },
   tournamentImage: {
     width: 50,
@@ -264,7 +276,43 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    width: '100%',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+  },
+  leftActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  rightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusText: {
+    fontSize: 14,
+    marginLeft: 4,
+    color: '#333',
+  },
+  fixtureButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E3F2FD',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#BBDEFB',
+  },
+  fixtureButtonText: {
+    color: '#1976D2',
+    fontSize: 14,
+    fontWeight: '500',
+    marginLeft: 4,
   },
   editButton: {
     padding: 5,

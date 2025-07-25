@@ -801,29 +801,41 @@ export default function TournamentForm() {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <Text style={styles.label}>Equipos</Text>
             {isEditing && id && selectedTeams.length >= 2 && (
-              <TouchableOpacity 
-                style={[
-                  styles.generateButton, 
-                  isGeneratingFixture && styles.generateButtonDisabled,
-                  {
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    paddingVertical: 8,
-                    paddingHorizontal: 16,
-                    borderRadius: 6
-                  }
-                ]}
-                onPress={() => generateFixture(id, true)}
-                disabled={isGeneratingFixture}
-              >
-                {isGeneratingFixture ? (
-                  <ActivityIndicator color="#fff" size="small" style={{ marginRight: 8 }} />
-                ) : null}
-                <Text style={styles.generateButtonText}>
-                  {hasGeneratedFixture ? 'Regenerar Fixture' : 'Generar Fixture'}
-                </Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity 
+                  style={[
+                    styles.generateButton, 
+                    isGeneratingFixture && styles.generateButtonDisabled,
+                    {
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      paddingVertical: 8,
+                      paddingHorizontal: 16,
+                      borderRadius: 6,
+                      flex: 1,
+                    }
+                  ]}
+                  onPress={() => generateFixture(id, true)}
+                  disabled={isGeneratingFixture}
+                >
+                  {isGeneratingFixture ? (
+                    <ActivityIndicator color="#fff" size="small" style={{ marginRight: 8 }} />
+                  ) : null}
+                  <Text style={styles.generateButtonText}>
+                    {hasGeneratedFixture ? 'Regenerar Fixture' : 'Generar Fixture'}
+                  </Text>
+                </TouchableOpacity>
+                
+                {hasGeneratedFixture && id && (
+                  <TouchableOpacity 
+                    style={[styles.generateButton, { backgroundColor: '#4CAF50', flex: 1 }]}
+                    onPress={() => router.push(`/(admin)/${id}/fixture`)}
+                  >
+                    <Text style={styles.generateButtonText}>Ver Fixture</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             )}
           </View>
           <Text style={styles.subLabel}>Seleccione al menos 2 equipos</Text>

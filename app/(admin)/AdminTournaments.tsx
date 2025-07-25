@@ -138,12 +138,12 @@ export default function AdminTournaments() {
                   <TouchableOpacity 
                     style={styles.fixtureButton}
                     onPress={() => router.push({
-                      pathname: "/(admin)/fixture/[id]",
+                      pathname: '/(admin)/[id]/fixture',
                       params: { id: tournament.id }
                     })}
                   >
                     <Ionicons name="calendar-outline" size={18} color="#1976D2" />
-                    <Text style={styles.fixtureButtonText}>Ver Fixture</Text>
+                    <Text style={styles.fixtureButtonText}>Fixture</Text>
                   </TouchableOpacity>
                   
                   <Link href={`/(admin)/TournamentForm?id=${tournament.id}`} asChild>

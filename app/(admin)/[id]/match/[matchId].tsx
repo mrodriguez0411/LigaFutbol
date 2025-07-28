@@ -364,7 +364,7 @@ export default function MatchResultScreen() {
             event_type: 'red_card',
           });
         }
-      }
+      };
 
       // Save all events
       if (matchEvents.length > 0) {

@@ -1,24 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  FlatList, 
-  TouchableOpacity, 
-  ActivityIndicator, 
-  RefreshControl,
-  ImageBackground,
-  ImageSourcePropType,
-  useWindowDimensions,
-  ViewStyle,
-  TextStyle,
-  ImageStyle
-} from 'react-native';
 import { supabase } from '@/config/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  ImageBackground,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View,
+  ViewStyle
+} from 'react-native';
+import fondo2 from '../../app/assets/images/fondo2.png';
 
 type Category = {
   id: string;
@@ -126,11 +124,34 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
   };
 
   const styles = StyleSheet.create({
+    backgroundImage: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      //width: '1%',
+      //height: '1%',
+      backgroundColor: '#000',
+    },
+    repeatingBackground: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: '#000',
+    },
     container: {
       flex: 1,
-      backgroundColor: '#f5f5f5',
-      padding: 8,
+      backgroundColor: '#000',
+      position: 'relative',
+      overflow: 'hidden',
     } as ViewStyle,
+    contentContainer: {
+      flex: 1,
+      padding: 8,
+      position: 'relative',
+      zIndex: 1,
+    },
     gridContainer: {
       padding: 8,
       width: '100%',
@@ -145,15 +166,15 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
       backgroundColor: '#fff',
       borderRadius: 12,
       overflow: 'hidden',
-      width: '100%', // Ocupa todo el ancho en móvil
-      maxWidth: 400, // Ancho máximo para mantener la legibilidad
+      width: '100%',
+      maxWidth: 400,
       marginBottom: 12,
       shadowColor: '#000',
       shadowOffset: { width: 0, height: 2 },
       shadowOpacity: 0.1,
       shadowRadius: 4,
       elevation: 3,
-      alignSelf: 'center', // Centrar la tarjeta en móvil
+      alignSelf: 'center',
     },
     tabletCard: {
       width: '48%', // Ancho para tablet
@@ -162,15 +183,16 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
     } as ViewStyle,
     cardImage: {
       width: '100%',
-      height: 350,
+      height: 400,
       justifyContent: 'flex-end',
     },
     cardImageBackground: {
       opacity: 0.9,
     },
     cardContent: {
-      padding: 8,
+      padding: 12,
       backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      borderRadius: 10,
     },
     cardTitle: {
       fontSize: 14,
@@ -186,7 +208,7 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
     },
     cardText: {
       color: '#fff',
-      fontSize: 10,
+      fontSize: 12,
       marginLeft: 4,
       textShadowColor: 'rgba(0, 0, 0, 0.75)',
       textShadowOffset: { width: -1, height: 1 },
@@ -369,50 +391,71 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
 
 
 
+  // Usar un único ImageBackground con resizeMode="repeat"
+  const renderPattern = () => {
+    return (
+      <ImageBackground
+        source={fondo2}
+        style={styles.repeatingBackground}
+        resizeMode="repeat"
+        imageStyle={{
+          width: '100%', // Tamaño de la imagen aumentado
+          height: '100%', // Tamaño de la imagen aumentado
+          opacity: 0.5, // Opacidad reducida para mejor legibilidad
+        }}
+      />
+    );
+  };
+
   return (
     <View style={styles.container}>
-      {loading ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#1976d2" />
-        </View>
-      ) : error ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="alert-circle" size={48} color="#ef4444" />
-          <Text style={[styles.emptyText, { color: '#ef4444' }]}>Error al cargar los torneos</Text>
-          <TouchableOpacity 
-            style={styles.retryButton}
-            onPress={() => {
-              setError(null);
-              fetchTournaments();
-            }}
-          >
-            <Text style={styles.retryButtonText}>Reintentar</Text>
-          </TouchableOpacity>
-        </View>
-      ) : tournaments.length === 0 ? (
-        <View style={styles.emptyContainer}>
-          <Ionicons name="trophy-outline" size={48} color="#9ca3af" />
-          <Text style={[styles.emptyText, { color: '#333' }]}>No hay torneos disponibles</Text>
-        </View>
-      ) : (
-        <FlatList
-          key={flatListKey}
-          data={tournaments}
-          keyExtractor={(item) => item.id}
-          renderItem={renderTournamentCard}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={onRefresh}
-              colors={['#1976d2']}
-              tintColor="#1976d2"
-            />
-          }
-          contentContainerStyle={styles.gridContainer}
-          numColumns={numColumns}
-          columnWrapperStyle={isTablet ? styles.columnWrapper : undefined}
-        />
-      )}
+      <View style={styles.repeatingBackground}>
+        {renderPattern()}
+      </View>
+      <View style={styles.contentContainer}>
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#1976d2" />
+          </View>
+        ) : error ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="alert-circle" size={48} color="#ef4444" />
+            <Text style={[styles.emptyText, { color: '#ef4444' }]}>Error al cargar los torneos</Text>
+            <TouchableOpacity 
+              style={styles.retryButton}
+              onPress={() => {
+                setError(null);
+                fetchTournaments();
+              }}
+            >
+              <Text style={styles.retryButtonText}>Reintentar</Text>
+            </TouchableOpacity>
+          </View>
+        ) : tournaments.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Ionicons name="trophy-outline" size={48} color="#9ca3af" />
+            <Text style={[styles.emptyText, { color: '#333' }]}>No hay torneos disponibles</Text>
+          </View>
+        ) : (
+          <FlatList
+            key={flatListKey}
+            data={tournaments}
+            keyExtractor={(item) => item.id}
+            renderItem={renderTournamentCard}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={['#1976d2']}
+                tintColor="#1976d2"
+              />
+            }
+            contentContainerStyle={styles.gridContainer}
+            numColumns={numColumns}
+            columnWrapperStyle={isTablet ? styles.columnWrapper : undefined}
+          />
+        )}
+      </View>
     </View>
   );
 }

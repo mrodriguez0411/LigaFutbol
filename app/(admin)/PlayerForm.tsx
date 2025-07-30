@@ -1,36 +1,31 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  View, 
-  Text, 
-  TextInput, 
-  TouchableOpacity, 
-  StyleSheet, 
-  ScrollView, 
-  Image, 
-  Alert, 
-  Platform,
-  StyleProp,
-  TextStyle,
-  ViewStyle,
-  ImageStyle,
-  Modal,
-  TouchableWithoutFeedback,
-  BackHandler,
-  ActivityIndicator
-} from 'react-native';
-import { useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
-import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
 import { supabase } from '@/config/supabase';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImageManipulator from 'expo-image-manipulator';
+import * as ImagePicker from 'expo-image-picker';
+import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  BackHandler,
+  Image,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import TeamSelector from './components/TeamSelector';
 
 type PlayerStatus = 'active' | 'suspended';
 const isWeb = Platform.OS === 'web';
 
-// Solo importamos DateTimePicker para móviles
+// Import DateTimePicker for mobile platforms
 let DateTimePicker: any = null;
-if (!isWeb) {
+if (Platform.OS !== 'web') {
   try {
     DateTimePicker = require('@react-native-community/datetimepicker').default;
   } catch (error) {
@@ -97,6 +92,8 @@ export default function PlayerForm() {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [date, setDate] = useState<Date>(new Date('2000-01-01'));
   const [birthDate, setBirthDate] = useState<Date | null>(null);
+  
+
   
   // Estado para la imagen temporal
   const [tempImage, setTempImage] = useState<string | null>(null);
@@ -308,18 +305,28 @@ export default function PlayerForm() {
 
   // Manejar cambio de fecha
   const handleDateChange = (event: any, selectedDate?: Date) => {
-    const currentDate = selectedDate || date;
-    setShowDatePicker(Platform.OS === 'ios');
-    
-    if (event.type !== 'dismissed') {
-      setDate(currentDate);
-      setBirthDate(currentDate);
-      
-      setFormData(prev => ({
-        ...prev,
-        date_of_birth: currentDate.toISOString().split('T')[0]
-      }));
+    // Cerrar el selector en Android después de seleccionar
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
     }
+
+    // Si el usuario canceló, no hacer nada
+    if (event.type === 'dismissed' || !selectedDate) {
+      return;
+    }
+
+    // Actualizar los estados con la fecha seleccionada
+    const currentDate = selectedDate;
+    setDate(currentDate);
+    setBirthDate(currentDate);
+    
+    // Actualizar el formulario con la fecha en formato YYYY-MM-DD
+    setFormData(prev => ({
+      ...prev,
+      date_of_birth: currentDate.toISOString().split('T')[0]
+    }));
+    
+    setFormTouched(true);
   };
 
   // Cargar datos del jugador si estamos editando
@@ -739,13 +746,39 @@ export default function PlayerForm() {
             </Text>
           </TouchableOpacity>
           {showDatePicker && (
-            <DateTimePicker
-              value={birthDate || new Date()}
-              mode="date"
-              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-              onChange={handleDateChange}
-              maximumDate={new Date()}
-            />
+            <View style={styles.datePickerContainer}>
+              {isWeb ? (
+                <input
+                  type="date"
+                  value={birthDate ? birthDate.toISOString().split('T')[0] : ''}
+                  onChange={(e) => {
+                    const selectedDate = e.target.value ? new Date(e.target.value) : new Date();
+                    handleDateChange({ type: 'set' }, selectedDate);
+                  }}
+                  max={new Date().toISOString().split('T')[0]}
+                  style={{
+                    padding: '8px',
+                    borderRadius: '4px',
+                    border: '1px solid #ccc',
+                    width: '100%',
+                    marginTop: '5px'
+                  }}
+                />
+              ) : DateTimePicker ? (
+                <DateTimePicker
+                  value={birthDate || new Date()}
+                  mode="date"
+                  display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                  onChange={handleDateChange}
+                  maximumDate={new Date()}
+                  themeVariant="light"
+                  locale="es-AR"
+                  textColor={Platform.OS === 'android' ? '#000000' : undefined}
+                />
+              ) : (
+                <Text style={{ color: 'red' }}>No se pudo cargar el selector de fechas</Text>
+              )}
+            </View>
           )}
         </View>
 
@@ -1141,9 +1174,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
   },
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
+  datePickerContainer: {
+    marginTop: 8,
+    marginBottom: 16,
   },
   // Estilos para el modal
   modalContainer: {
@@ -1151,19 +1184,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  modalContent: {
-    width: '90%',
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 20,
-    maxHeight: '80%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
   },
   modalButtons: {
     flexDirection: 'row',

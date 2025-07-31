@@ -128,8 +128,8 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
       position: 'absolute',
       top: 0,
       left: 0,
-      //width: '1%',
-      //height: '1%',
+      width: '1%',
+      height: '1%',
       backgroundColor: '#000',
     },
     repeatingBackground: {

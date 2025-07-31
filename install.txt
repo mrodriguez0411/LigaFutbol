@@ -18,3 +18,6 @@ npx expo install react-native-tooltip
 npx expo install react-native-walkthrough-tooltip
 
 npm install --save-dev @types/node @types/react @types/react-native
+npm install --save-dev @types/react-native-reanimated
+
+npx expo install lottie-react-native   Para icono de Pelota

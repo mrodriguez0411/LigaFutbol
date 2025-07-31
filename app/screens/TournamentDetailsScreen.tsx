@@ -1,13 +1,13 @@
 // f:\Liga\LigaFutbol\app\screens\TournamentDetailsScreen.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Image } from 'react-native';
-import { RouteProp } from '@react-navigation/native';
-import { StackNavigationProp } from '@react-navigation/stack';
-import { RootStackParamList } from '../navigation';
-import { supabase, Tournament, Team, Match, Standing, TournamentRegistrationWithTeam, RegistrationWithTeams } from '../config/supabase';
+import { StyleSheet, ScrollView, Image, ImageBackground, ViewStyle, View, TextStyle, Dimensions, Animated, Easing } from 'react-native';
+import Loading from '../components/Loading';
 import { ThemedText, ThemedView } from '../components/Themed';
-import { useNavigation } from '@react-navigation/native';
-import { RootStackNavigationProp } from '../navigation';
+import { RouteProp, useNavigation } from '@react-navigation/native';
+import { StackNavigationProp } from '@react-navigation/stack';
+import { RootStackParamList, RootStackNavigationProp } from '../navigation';
+import { supabase, Tournament, Team, Match, Standing, TournamentRegistrationWithTeam, RegistrationWithTeams } from '../config/supabase';
+import fondo2 from '../../app/assets/images/fondo2.png';
 
 // Tipos para las props de navegación y ruta
 type TournamentDetailsScreenRouteProp = RouteProp<RootStackParamList, 'TournamentDetails'>;
@@ -25,139 +25,152 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
   const [teams, setTeams] = useState<Team[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [standings, setStandings] = useState<Standing[]>([]);
+  const theme = { light: '#fff', dark: '#000' };
+  
+
+
+  // Helper function to combine styles safely
+  const combineStyles = (...styleArgs: (TextStyle | TextStyle[] | undefined)[]): TextStyle => {
+    return styleArgs.reduce((combined: any, style) => {
+      if (!style) return combined;
+      if (Array.isArray(style)) {
+        return [...combined, ...style];
+      }
+      return [...combined, style];
+    }, []);
+  };
+
+  // Helper function to render text with theme
+  const renderText = (
+    text: React.ReactNode,
+    style: TextStyle | TextStyle[] = {},
+    type?: 'title' | 'subtitle' | 'body'
+  ) => {
+    const baseStyle = type === 'title' ? styles.title : {};
+    const combinedStyle = Array.isArray(style) 
+      ? [baseStyle, ...style] 
+      : [baseStyle, style];
+      
+    return (
+      <ThemedText 
+        type={type || 'body'}
+        light={theme.light} 
+        dark={theme.dark}
+        style={StyleSheet.flatten(combinedStyle)}
+      >
+        {text}
+      </ThemedText>
+    );
+  };
 
   // Cargar datos del torneo
   useEffect(() => {
+    let isMounted = true; // Para evitar actualizaciones en componentes desmontados
+    
     const loadTournamentData = async () => {
       try {
+        setLoading(true); // Asegurar que el loading esté activo al empezar
+        
         // 1. Obtener detalles del torneo
         const { data: tournamentData, error: tournamentError } = await supabase
           .from('tournaments')
           .select('*, categories(*)')
           .eq('id', tournamentId)
           .single();
-
+          
         if (tournamentError) throw tournamentError;
+        if (!isMounted) return;
         setTournament(tournamentData);
 
-        // 2. Obtener equipos inscritos (a través de tournament_registrations)
-        const { data: registrationsData, error: teamsError } = await supabase
+        // 2. Obtener equipos inscritos
+        const { data: registrations, error: teamsError } = await supabase
           .from('tournament_registrations')
           .select('teams(*)')
           .eq('tournament_id', tournamentId);
-
+          
         if (teamsError) throw teamsError;
-        // Extraer los equipos de las inscripciones
-        const teams = (registrationsData as RegistrationWithTeams[]).map(reg => reg.teams[0]);
-        setTeams(teams);
+        if (!isMounted) return;
+        
+        const teamList = (registrations || []).map((reg: any) => reg.teams[0]);
+        setTeams(teamList);
 
-        // 3. Obtener partidos del torneo con datos de equipos y estadísticas
-        const { data: matchesData, error: matchesError } = await supabase
+        // 3. Obtener partidos
+        const { data: matchList, error: matchesError } = await supabase
           .from('matches')
-          .select(`
-            *,
-            home_team:home_team_id(
-              name,
-              logo_url
-            ),
-            away_team:away_team_id(
-              name,
-              logo_url
-            ),
-            home_goals:match_events(
-              count(*) FILTER (WHERE event_type = 'goal' AND team_id = home_team_id)
-            ),
-            home_yellow_cards:match_events(
-              count(*) FILTER (WHERE event_type = 'yellow_card' AND team_id = home_team_id)
-            ),
-            home_red_cards:match_events(
-              count(*) FILTER (WHERE event_type = 'red_card' AND team_id = home_team_id)
-            ),
-            home_red_card_details:match_events(
-              player:player_id(
-                name as player_name,
-                dni as player_dni
-              ),
-              suspension_days,
-              report
-            ) FILTER (WHERE event_type = 'red_card' AND team_id = home_team_id),
-            away_goals:match_events(
-              count(*) FILTER (WHERE event_type = 'goal' AND team_id = away_team_id)
-            ),
-            away_yellow_cards:match_events(
-              count(*) FILTER (WHERE event_type = 'yellow_card' AND team_id = away_team_id)
-            ),
-            away_red_cards:match_events(
-              count(*) FILTER (WHERE event_type = 'red_card' AND team_id = away_team_id)
-            ),
-            away_red_card_details:match_events(
-              player:player_id(
-                name as player_name,
-                dni as player_dni
-              ),
-              suspension_days,
-              report
-            ) FILTER (WHERE event_type = 'red_card' AND team_id = away_team_id)
-          `)
+          .select('*')
           .eq('tournament_id', tournamentId)
           .order('match_datetime', { ascending: true });
-
+          
         if (matchesError) throw matchesError;
-        setMatches(matchesData);
+        if (!isMounted) return;
+        setMatches(matchList || []);
 
         // 4. Obtener tabla de posiciones
-        const { data: standingsData, error: standingsError } = await supabase
+        const { data: standingList, error: standingsError } = await supabase
           .from('standings')
           .select('*')
           .eq('tournament_id', tournamentId)
           .order('position', { ascending: true });
-
+          
         if (standingsError) throw standingsError;
-        setStandings(standingsData);
+        if (!isMounted) return;
+        setStandings(standingList || []);
 
       } catch (error) {
         console.error('Error loading tournament data:', error);
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     loadTournamentData();
+    
+    return () => {
+      isMounted = false;
+    };
   }, [tournamentId]);
 
   if (loading) {
-    return (
-      <ThemedView style={styles.container}>
-        <ActivityIndicator size="large" color="#1976d2" />
-      </ThemedView>
-    );
+    return <Loading text="Cargando torneo..." />;
   }
 
+  // Render the repeating background pattern
+  const renderPattern = () => (
+    <ImageBackground
+      source={fondo2}
+      style={styles.backgroundImage}
+      resizeMode="repeat"
+      imageStyle={styles.backgroundImageStyle}
+    />
+  );
+
   return (
-    <ThemedView style={styles.container}>
-      <ScrollView>
+    <ThemedView style={styles.container} light={theme.light} dark={theme.dark}>
+      {renderPattern()}
+      <ScrollView style={styles.content}>
         {/* Header del Torneo */}
         <View style={styles.section}>
-          <ThemedText type="title" style={styles.title}>
-            {tournament?.name || tournamentName || 'Torneo'}
-          </ThemedText>
+          {renderText(tournament?.name || tournamentName || 'Torneo', { ...styles.title, textAlign: 'center' }, 'title')}
           <View style={styles.tournamentInfo}>
-            <ThemedText style={styles.infoItem}>
-              Categoría: {tournament?.categories?.name || 'Categoría'}
-            </ThemedText>
-            <ThemedText style={styles.infoItem}>
-              Estado: {tournament?.status || 'Programado'}
-            </ThemedText>
+            {renderText(
+              `${tournament?.start_date ? new Date(tournament.start_date).toLocaleDateString() : ''} - 
+               ${tournament?.end_date ? new Date(tournament.end_date).toLocaleDateString() : ''}`,
+              styles.infoItem
+            )}
+            {renderText(`Estado: ${tournament?.status || 'Programado'}`, styles.infoItem)}
           </View>
         </View>
 
         {/* Equipos Inscritos */}
         <View style={styles.section}>
-          <ThemedText type="subtitle">Equipos Inscritos ({teams.length})</ThemedText>
+          {renderText('Equipos Inscritos', styles.subtitle, 'subtitle')}
+          {renderText(`(${teams.length})`, styles.subtitle)}
           {teams.map((team) => (
             <View key={team.id} style={styles.teamItem}>
               <View style={styles.teamHeader}>
-                <ThemedText style={styles.teamName}>{team.name}</ThemedText>
+                {renderText(team.name, styles.teamTitle, 'title')}
                 {team.logo_url && (
                   <Image 
                     source={{ uri: team.logo_url }} 
@@ -168,12 +181,12 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
               </View>
               <View style={styles.teamStats}>
                 <View style={styles.statItem}>
-                  <ThemedText style={styles.statLabel}>Goles</ThemedText>
-                  <ThemedText style={styles.statValue}>0</ThemedText>
+                  {renderText('Goles', styles.statLabel)}
+                  {renderText('0', styles.statValue)}
                 </View>
                 <View style={styles.statItem}>
-                  <ThemedText style={styles.statLabel}>Tarjetas</ThemedText>
-                  <ThemedText style={styles.statValue}>0</ThemedText>
+                  {renderText('Tarjetas Amarillas', styles.statLabel)}
+                  {renderText('0', styles.statValue)}
                 </View>
               </View>
             </View>
@@ -182,17 +195,19 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
 
         {/* Partidos */}
         <View style={styles.section}>
-          <ThemedText type="subtitle">Partidos</ThemedText>
+          {renderText('Partidos', styles.subtitle, 'subtitle')}
           {matches.map((match) => (
             <View key={match.id} style={styles.matchItem}>
               <View style={styles.matchHeader}>
-                <ThemedText style={styles.matchInfo}>
-                  {match.round} - {match.match_datetime ? new Date(match.match_datetime).toLocaleDateString() : 'Fecha por definir'}
-                </ThemedText>
+                {renderText(
+                  `${match.round} - ${match.match_datetime ? new Date(match.match_datetime).toLocaleDateString() : 'Fecha por definir'}`,
+                  styles.matchInfo
+                )}
                 <View style={styles.matchStatus}>
-                  <ThemedText style={styles.statusText}>
-                    {match.status}
-                  </ThemedText>
+                  {renderText(
+                    match.status,
+                    styles.statusText
+                  )}
                 </View>
               </View>
               <View style={styles.matchTeams}>
@@ -205,92 +220,29 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                     />
                   )}
                   <View style={styles.teamStats}>
-                    <ThemedText style={styles.teamScore}>
+                    <ThemedText 
+                      style={styles.teamScore}
+                      light={theme.light}
+                      dark={theme.dark}
+                    >
                       {match.home_team?.name} {match.home_score}
                     </ThemedText>
                     <View style={styles.eventStats}>
                       <View style={styles.statItem}>
-                        <ThemedText style={styles.statLabel}>Goles</ThemedText>
-                        <ThemedText style={styles.statValue}>{match.home_goals || 0}</ThemedText>
+                        {renderText('Goles', styles.statLabel)}
+                        {renderText(String(match.home_goals || 0), styles.statValue)}
                       </View>
                       <View style={styles.statItem}>
-                        <ThemedText style={styles.statLabel}>Tarjetas</ThemedText>
+                        {renderText('Tarjetas', styles.statLabel)}
                         <View style={styles.cardsContainer}>
                           <View style={styles.cardCount}>
-                            <ThemedText style={styles.cardLabel}>Amarillas:</ThemedText>
-                            <ThemedText style={styles.cardValue}>{match.home_yellow_cards || 0}</ThemedText>
+                            {renderText(String(match.home_yellow_cards || 0), styles.cardValue)}
+                            {renderText('Amarillas', styles.cardLabel)}
                           </View>
                           <View style={styles.cardCount}>
-                            <ThemedText style={styles.cardLabel}>Rojas:</ThemedText>
-                            <ThemedText style={styles.cardValue}>{match.home_red_cards || 0}</ThemedText>
+                            {renderText(String(match.home_red_cards || 0), [styles.cardValue, { color: '#f44336' }])}
+                            {renderText('Rojas', styles.cardLabel)}
                           </View>
-                          {match.home_red_cards > 0 && (
-                            <View style={styles.redCardDetails}>
-                              {match.home_red_card_details.map((detail, index) => (
-                                <View key={index} style={styles.redCardDetail}>
-                                  <ThemedText style={styles.playerName}>{detail.player_name}</ThemedText>
-                                  <ThemedText style={styles.suspensionDays}>
-                                    Suspendido {detail.suspension_days} días
-                                  </ThemedText>
-                                  {detail.report && (
-                                    <ThemedText style={styles.report}>
-                                      Informe: {detail.report}
-                                    </ThemedText>
-                                  )}
-                                </View>
-                              ))}
-                            </View>
-                          )}
-                        </View>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-                <View style={styles.teamContainer}>
-                  {match.away_team?.logo_url && (
-                    <Image 
-                      source={{ uri: match.away_team.logo_url }} 
-                      style={styles.teamLogo}
-                      resizeMode="contain"
-                    />
-                  )}
-                  <View style={styles.teamStats}>
-                    <ThemedText style={styles.teamScore}>
-                      {match.away_team?.name} {match.away_score}
-                    </ThemedText>
-                    <View style={styles.eventStats}>
-                      <View style={styles.statItem}>
-                        <ThemedText style={styles.statLabel}>Goles</ThemedText>
-                        <ThemedText style={styles.statValue}>{match.away_goals || 0}</ThemedText>
-                      </View>
-                      <View style={styles.statItem}>
-                        <ThemedText style={styles.statLabel}>Tarjetas</ThemedText>
-                        <View style={styles.cardsContainer}>
-                          <View style={styles.cardCount}>
-                            <ThemedText style={styles.cardLabel}>Amarillas:</ThemedText>
-                            <ThemedText style={styles.cardValue}>{match.away_yellow_cards || 0}</ThemedText>
-                          </View>
-                          <View style={styles.cardCount}>
-                            <ThemedText style={styles.cardLabel}>Rojas:</ThemedText>
-                            <ThemedText style={styles.cardValue}>{match.away_red_cards || 0}</ThemedText>
-                          </View>
-                          {match.away_red_cards > 0 && (
-                            <View style={styles.redCardDetails}>
-                              {match.away_red_card_details.map((detail, index) => (
-                                <View key={index} style={styles.redCardDetail}>
-                                  <ThemedText style={styles.playerName}>{detail.player_name}</ThemedText>
-                                  <ThemedText style={styles.suspensionDays}>
-                                    Suspendido {detail.suspension_days} días
-                                  </ThemedText>
-                                  {detail.report && (
-                                    <ThemedText style={styles.report}>
-                                      Informe: {detail.report}
-                                    </ThemedText>
-                                  )}
-                                </View>
-                              ))}
-                            </View>
-                          )}
                         </View>
                       </View>
                     </View>
@@ -304,22 +256,20 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         {/* Tabla de Posiciones */}
         <View style={styles.section}>
           <View style={styles.standingsHeader}>
-            <ThemedText style={styles.standingsHeaderItem}>Pos</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>Equipo</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>PJ</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>PG</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>PE</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>PP</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>GF</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>GC</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>GD</ThemedText>
-            <ThemedText style={styles.standingsHeaderItem}>Pts</ThemedText>
+            {renderText('Pos', [styles.standingsHeaderItem, { width: 40 }])}
+            {renderText('Equipo', [styles.standingsHeaderItem, { flex: 1 }])}
+            {renderText('PJ', [styles.standingsHeaderItem, { width: 32 }])}
+            {renderText('PG', [styles.standingsHeaderItem, { width: 32 }])}
+            {renderText('PE', [styles.standingsHeaderItem, { width: 32 }])}
+            {renderText('PP', [styles.standingsHeaderItem, { width: 32 }])}
+            {renderText('GF', [styles.standingsHeaderItem, { width: 40 }])}
+            {renderText('GC', [styles.standingsHeaderItem, { width: 40 }])}
+            {renderText('GD', [styles.standingsHeaderItem, { width: 40 }])}
+            {renderText('Pts', [styles.standingsHeaderItem, { width: 40, fontWeight: 'bold' }])}
           </View>
           {standings.map((standing, index) => (
             <View key={standing.id} style={styles.standingItem}>
-              <ThemedText style={styles.standingPosition}>
-                {index + 1}
-              </ThemedText>
+              {renderText(String(index + 1), styles.standingPosition)}
               <View style={styles.standingTeamContainer}>
                 {teams.find(t => t.id === standing.tournament_registration_id)?.logo_url && (
                   <Image 
@@ -328,40 +278,16 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
                     resizeMode="contain"
                   />
                 )}
-                <ThemedText 
-                  style={styles.standingTeamName}
-                  onPress={() => navigation.navigate('TeamDetails', {
-                    teamId: standing.tournament_registration_id,
-                    tournamentId: tournamentId
-                  })}
-                >
-                  {teams.find(t => t.id === standing.tournament_registration_id)?.name || 'Equipo'}
-                </ThemedText>
+                {renderText(teams.find(t => t.id === standing.tournament_registration_id)?.name || 'Equipo', styles.standingTeamName, 'body')}
               </View>
-              <ThemedText style={styles.standingStats}>
-                {standing.games_played}
-              </ThemedText>
-              <ThemedText style={styles.standingStats}>
-                {standing.wins}
-              </ThemedText>
-              <ThemedText style={styles.standingStats}>
-                {standing.draws}
-              </ThemedText>
-              <ThemedText style={styles.standingStats}>
-                {standing.losses}
-              </ThemedText>
-              <ThemedText style={styles.standingStats}>
-                {standing.goals_for}
-              </ThemedText>
-              <ThemedText style={styles.standingStats}>
-                {standing.goals_against}
-              </ThemedText>
-              <ThemedText style={styles.standingStats}>
-                {standing.goal_difference}
-              </ThemedText>
-              <ThemedText style={styles.standingPoints}>
-                {standing.points}
-              </ThemedText>
+              {renderText(String(standing.games_played), styles.standingStats)}
+              {renderText(String(standing.wins), styles.standingStats)}
+              {renderText(String(standing.draws), styles.standingStats)}
+              {renderText(String(standing.losses), styles.standingStats)}
+              {renderText(String(standing.goals_for), styles.standingStats)}
+              {renderText(String(standing.goals_against), styles.standingStats)}
+              {renderText(String(standing.goal_difference), styles.standingStats)}
+              {renderText(String(standing.points), [styles.standingPoints, { fontWeight: 'bold' }])}
             </View>
           ))}
         </View>
@@ -370,16 +296,107 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
   );
 };
 
+// Estilos
 const styles = StyleSheet.create({
+
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: '#666',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#fff',
+  },
+  errorText: {
+    color: 'red',
+    fontSize: 16,
+    textAlign: 'center',
+  },
   container: {
     flex: 1,
+    backgroundColor: '#000',
+    position: 'relative',
+  },
+  content: {
+    flex: 1,
     padding: 16,
+    position: 'relative',
+    zIndex: 1,
+  },
+  backgroundImage: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: -1,
+  },
+  backgroundImageStyle: {
+    width: 300,
+    height: 300,
+    opacity: 0.5,
   },
   title: {
     fontSize: 24,
     fontWeight: 'bold',
     marginBottom: 8,
     textAlign: 'center',
+    color: '#000',
+  } as TextStyle,
+  teamTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+    color: '#000',
+  } as TextStyle,
+  eventStats: {
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  cardsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginVertical: 8,
+  },
+  cardCount: {
+    alignItems: 'center',
+    padding: 8,
+  },
+  cardLabel: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  cardValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000',
+  },
+  redCardDetails: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#f8f8f8',
+    borderRadius: 4,
+  },
+  redCardDetail: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  playerName: {
+    flex: 1,
+    fontSize: 14,
+    color: '#333',
+  },
+  suspensionDays: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#d32f2f',
+  },
+  report: {
+    fontSize: 14,
+    color: '#666',
+    fontStyle: 'italic',
   },
   subtitle: {
     fontSize: 18,
@@ -390,7 +407,7 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 24,
     padding: 16,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderRadius: 8,
   },
   tournamentInfo: {
@@ -401,7 +418,8 @@ const styles = StyleSheet.create({
   infoItem: {
     fontSize: 14,
     color: '#444',
-  },
+    marginVertical: 4,
+  } as TextStyle,
   teamItem: {
     paddingVertical: 8,
     borderBottomWidth: 1,

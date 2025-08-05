@@ -1,6 +1,7 @@
 // f:\Liga\LigaFutbol\app\screens\TournamentDetailsScreen.tsx
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, ScrollView, Image, ImageBackground, ViewStyle, View, TextStyle, Dimensions, Animated, Easing } from 'react-native';
+import { StyleSheet, ScrollView, Image, ImageBackground, ViewStyle, View, TextStyle, Dimensions, Animated, Easing, TouchableOpacity } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import Loading from '../components/Loading';
 import { ThemedText, ThemedView } from '../components/Themed';
 import { RouteProp, useNavigation } from '@react-navigation/native';
@@ -94,10 +95,14 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
         const teamList = (registrations || []).map((reg: any) => reg.teams[0]);
         setTeams(teamList);
 
-        // 3. Obtener partidos
+        // 3. Obtener partidos del torneo con información de equipos
         const { data: matchList, error: matchesError } = await supabase
           .from('matches')
-          .select('*')
+          .select(`
+            *,
+            home_team:home_team_id(id, name, logo_url),
+            away_team:away_team_id(id, name, logo_url)
+          `)
           .eq('tournament_id', tournamentId)
           .order('match_datetime', { ascending: true });
           
@@ -150,6 +155,14 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
     <ThemedView style={styles.container} light={theme.light} dark={theme.dark}>
       {renderPattern()}
       <ScrollView style={styles.content}>
+        {/* Botón de Atrás */}
+        <TouchableOpacity 
+          style={styles.backButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={24} color="#007AFF" />
+        </TouchableOpacity>
+        
         {/* Header del Torneo */}
         <View style={styles.section}>
           {renderText(tournament?.name || tournamentName || 'Torneo', { ...styles.title, textAlign: 'center' }, 'title')}
@@ -182,10 +195,6 @@ const TournamentDetailsScreen: React.FC<Props> = ({ route, navigation }) => {
               <View style={styles.teamStats}>
                 <View style={styles.statItem}>
                   {renderText('Goles', styles.statLabel)}
-                  {renderText('0', styles.statValue)}
-                </View>
-                <View style={styles.statItem}>
-                  {renderText('Tarjetas Amarillas', styles.statLabel)}
                   {renderText('0', styles.statValue)}
                 </View>
               </View>
@@ -318,8 +327,16 @@ const styles = StyleSheet.create({
   },
   container: {
     flex: 1,
-    backgroundColor: '#000',
     position: 'relative',
+  },
+  backButton: {
+    position: 'absolute',
+    top: 16,
+    left: 16,
+    zIndex: 100,
+    padding: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    borderRadius: 20,
   },
   content: {
     flex: 1,

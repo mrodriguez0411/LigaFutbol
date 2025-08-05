@@ -2,7 +2,7 @@ import { supabase } from '@/config/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 type Player = {
   id: string;
@@ -15,6 +15,12 @@ type Player = {
   name?: string; // For backward compatibility
 };
 
+interface Team {
+  id: string;
+  name: string;
+  logo_url: string | null;
+}
+
 interface Match {
   id: string;
   home_team_id: string;
@@ -23,9 +29,14 @@ interface Match {
   away_team_name: string;
   home_team_score: number | null;
   away_team_score: number | null;
+  home_team_logo: string | null;
+  away_team_logo: string | null;
   match_date: string;
   status: string;
   round: number;
+  home_team: Team;
+  away_team: Team;
+  tournament_name?: string;
 }
 
 export default function MatchResultScreen() {
@@ -34,6 +45,7 @@ export default function MatchResultScreen() {
   const [match, setMatch] = useState<Match | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const isSaving = saving; // Alias for consistency with existing code
   const [homeScore, setHomeScore] = useState<string>('');
   const [awayScore, setAwayScore] = useState<string>('');
   const [homePlayers, setHomePlayers] = useState<Player[]>([]);
@@ -117,7 +129,8 @@ export default function MatchResultScreen() {
         .select(`
           *,
           home_team:home_team_id(*),
-          away_team:away_team_id(*)
+          away_team:away_team_id(*),
+          tournaments: tournament_id(id, name)
         `)
         .eq('id', matchId)
         .single();
@@ -148,6 +161,9 @@ export default function MatchResultScreen() {
         ...matchData,
         home_team_name: matchData.home_team?.name || 'Equipo Local',
         away_team_name: matchData.away_team?.name || 'Equipo Visitante',
+        home_team_logo: matchData.home_team?.logo_url || null,
+        away_team_logo: matchData.away_team?.logo_url || null,
+        tournament_name: matchData.tournaments?.name || 'Torneo',
       });
       
       setHomeScore(matchData.home_team_score?.toString() || '0');
@@ -505,9 +521,18 @@ export default function MatchResultScreen() {
     <SafeAreaView style={styles.container}>
       <Stack.Screen
         options={{
-          title: 'Editar Partido',
-          headerTitleStyle: { color: '#fff' },
-          headerStyle: { backgroundColor: '#1976D2' },
+          title: `Fecha ${match?.round || ''} • ${match?.tournament_name || 'Torneo'}`,
+          headerTitleStyle: { 
+            color: '#fff', 
+            fontSize: 20,
+            fontWeight: '500',
+          },
+          headerStyle: { 
+            backgroundColor: '#FF6B00',
+          },
+          headerTintColor: '#fff',
+          headerTitleAlign: 'center',
+          headerShadowVisible: false,
         }}
       />
       
@@ -519,7 +544,16 @@ export default function MatchResultScreen() {
           
           <View style={styles.teamsContainer}>
             <View style={styles.teamContainer}>
-              <Text style={styles.teamName}>{match.home_team_name}</Text>
+              <View style={styles.teamHeader}>
+                {match.home_team?.logo_url && (
+                  <Image 
+                    source={{ uri: match.home_team.logo_url }} 
+                    style={styles.teamLogo} 
+                    resizeMode="contain"
+                  />
+                )}
+                <Text style={styles.teamName}>{match.home_team_name}</Text>
+              </View>
               <View style={styles.scoreContainer}>
                 <TextInput
                   style={styles.scoreInput}
@@ -534,7 +568,16 @@ export default function MatchResultScreen() {
             <Text style={styles.vsText}>VS</Text>
             
             <View style={styles.teamContainer}>
-              <Text style={styles.teamName}>{match.away_team_name}</Text>
+              <View style={styles.teamHeader}>
+                {match.away_team?.logo_url && (
+                  <Image 
+                    source={{ uri: match.away_team.logo_url }} 
+                    style={styles.teamLogo} 
+                    resizeMode="contain"
+                  />
+                )}
+                <Text style={styles.teamName}>{match.away_team_name}</Text>
+              </View>
               <View style={styles.scoreContainer}>
                 <TextInput
                   style={styles.scoreInput}
@@ -548,7 +591,7 @@ export default function MatchResultScreen() {
           </View>
           
           <View style={styles.legendContainer}>
-            <View style={styles.legendItem}>
+            {/*<View style={styles.legendItem}>
               <Ionicons name="football" size={16} color="#2e7d32" />
               <Text style={styles.legendText}>Goles</Text>
             </View>
@@ -559,7 +602,8 @@ export default function MatchResultScreen() {
             <View style={styles.legendItem}>
               <Ionicons name="close-circle" size={16} color="#f44336" />
               <Text style={styles.legendText}>Rojas</Text>
-            </View>
+            </View>*/}
+            <View style={styles.legendItem}>ESTADISTICAS</View>
           </View>
           
           <View style={styles.playersContainer}>
@@ -586,20 +630,26 @@ export default function MatchResultScreen() {
             </View>
           </View>
           
-          <TouchableOpacity
-            style={[
-              styles.saveButton,
-              saving && styles.saveButtonDisabled
-            ]}
-            onPress={handleSaveResult}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.saveButtonText}>Guardar Resultado</Text>
-            )}
-          </TouchableOpacity>
+          <View style={styles.buttonsContainer}>
+            <TouchableOpacity
+              style={styles.saveButton}
+              onPress={handleSaveResult}
+              disabled={isSaving}
+            >
+              {isSaving ? (
+                <ActivityIndicator color="#FF6B00" />
+              ) : (
+                <Text style={styles.saveButtonText}>Guardar Resultado</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={() => router.back()}
+              disabled={isSaving}
+            >
+              <Text style={styles.cancelButtonText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -652,11 +702,20 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
   },
+  teamHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  teamLogo: {
+    width: 50,
+    height: 50,
+    marginRight: 10,
+  },
   teamName: {
     fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 10,
-    textAlign: 'center',
+    fontWeight: '600',    textAlign: 'center',
   },
   scoreContainer: {
     flexDirection: 'row',
@@ -664,14 +723,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scoreInput: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
     textAlign: 'center',
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 4,
-    padding: 8,
-    minWidth: 60,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    minWidth: 50,
+    marginHorizontal: 5,
   },
   vsText: {
     fontSize: 18,
@@ -780,20 +841,11 @@ const styles = StyleSheet.create({
   activeRedCard: {
     backgroundColor: '#f44336',
   },
-  saveButton: {
-    backgroundColor: '#1976D2',
-    padding: 16,
-    borderRadius: 8,
-    alignItems: 'center',
+  buttonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     marginTop: 20,
-  },
-  saveButtonDisabled: {
-    backgroundColor: '#90CAF9',
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+    gap: 10,
   },
   teamPlayersTitle: {
     fontSize: 14,
@@ -865,23 +917,57 @@ const styles = StyleSheet.create({
   redCardButton: {
     backgroundColor: '#ffebee',
   },
-  activeRedCard: {
-    backgroundColor: '#f44336',
-  },
-  // Save Button
   saveButton: {
-    backgroundColor: '#1976D2',
+    flex: 1,
+    backgroundColor: '#000',
     padding: 16,
     borderRadius: 8,
     alignItems: 'center',
-    marginTop: 10,
-  },
-  saveButtonDisabled: {
-    backgroundColor: '#90CAF9',
+    justifyContent: 'center',
+    minHeight: 50,
   },
   saveButtonText: {
-    color: '#fff',
-    fontSize: 16,
+    color: '#A33400',
+    fontSize: 20,
     fontWeight: 'bold',
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    minHeight: 50,
+  },
+  cancelButtonText: {
+    color: '#666',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  activeRedCard: {
+    backgroundColor: '#f44336',
+  },
+  statButton: {
+    padding: 4,
+    borderRadius: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 28,
+    height: 28,
+  },
+  goalButton: {
+    backgroundColor: '#e8f5e9',
+  },
+  yellowCardButton: {
+    backgroundColor: '#fffde7',
+  },
+  redCardButton: {
+    backgroundColor: '#ffebee',
+  },
+  activeRedCard: {
+    backgroundColor: '#f44336',
   },
 });

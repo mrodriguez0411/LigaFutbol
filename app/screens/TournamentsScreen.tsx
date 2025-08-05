@@ -5,22 +5,42 @@ import { es } from 'date-fns/locale';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  FlatList,
-  ImageBackground,
-  RefreshControl,
-  StyleSheet,
+  View,
   Text,
+  StyleSheet,
+  ImageBackground,
   TouchableOpacity,
   useWindowDimensions,
-  View,
-  ViewStyle
+  FlatList,
+  ActivityIndicator,
+  Image,
+  RefreshControl
 } from 'react-native';
 import fondo2 from '../../app/assets/images/fondo2.png';
 
 type Category = {
   id: string;
   name: string;
+};
+
+type Team = {
+  id: string;
+  name: string;
+  logo_url?: string;
+};
+
+type Match = {
+  id: string;
+  tournament_id: string;
+  home_team_id: string;
+  away_team_id: string;
+  home_team: Team[] | null;
+  away_team: Team[] | null;
+  home_score?: number | null;
+  away_score?: number | null;
+  match_datetime: string;
+  status: 'scheduled' | 'in_progress' | 'completed' | 'postponed' | 'cancelled';
+  venue?: string | null;
 };
 
 type Tournament = {
@@ -34,6 +54,7 @@ type Tournament = {
   category?: Category | null;
   tournament_registrations: Array<{ team_id: string }>;
   teams_count?: number;
+  next_matches?: Match[];
 };
 
 type TournamentsScreenProps = {
@@ -65,6 +86,69 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
     return `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/public/tournament-images/${url}`;
   };
 
+  const renderMatchItem = (match: Match, isDark: boolean) => {
+    const matchDate = match.match_datetime ? format(new Date(match.match_datetime), 'EEE d MMM, HH:mm', { locale: es }) : 'Fecha por definir';
+    const textColor = isDark ? '#fff' : '#333';
+    const secondaryTextColor = isDark ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.6)';
+    
+    // Handle team data which comes as an array from Supabase
+    const homeTeam = Array.isArray(match.home_team) ? match.home_team[0] : match.home_team;
+    const awayTeam = Array.isArray(match.away_team) ? match.away_team[0] : match.away_team;
+
+    return (
+      <View key={match.id} style={styles.matchItem}>
+        <View style={styles.matchTeamsRow}>
+          <View style={styles.teamContainer}>
+            {homeTeam?.logo_url ? (
+              <Image 
+                source={{ uri: homeTeam.logo_url }} 
+                style={styles.teamLogoSmall}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={[styles.teamLogoSmall, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+            )}
+            <Text style={[styles.teamName, { color: textColor }]} numberOfLines={1}>
+              {homeTeam?.name || 'Equipo local'}
+            </Text>
+          </View>
+          
+          <View style={styles.matchScoreContainer}>
+            {match.status === 'completed' ? (
+              <Text style={[styles.matchScore, { color: textColor }]}>
+                {match.home_score ?? '-'} - {match.away_score ?? '-'}
+              </Text>
+            ) : (
+              <Text style={[styles.matchTime, { color: secondaryTextColor }]}>
+                {matchDate}
+              </Text>
+            )}
+          </View>
+          
+          <View style={[styles.teamContainer, { alignItems: 'flex-end' }]}>
+            {awayTeam?.logo_url ? (
+              <Image 
+                source={{ uri: awayTeam.logo_url }} 
+                style={styles.teamLogoSmall}
+                resizeMode="contain"
+              />
+            ) : (
+              <View style={[styles.teamLogoSmall, { backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }]} />
+            )}
+            <Text style={[styles.teamName, { color: textColor }]} numberOfLines={1}>
+              {awayTeam?.name || 'Equipo visitante'}
+            </Text>
+          </View>
+        </View>
+        {match.venue && (
+          <Text style={[styles.matchVenue, { color: secondaryTextColor }]} numberOfLines={1}>
+            <Ionicons name="location" size={12} color={secondaryTextColor} /> {match.venue}
+          </Text>
+        )}
+      </View>
+    );
+  };
+
   const renderTournamentCard = ({ item }: { item: Tournament }) => {
     const cardStyle: ViewStyle[] = [
       styles.card as ViewStyle,
@@ -75,9 +159,12 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
     const teamsCount = item.teams_count || item.tournament_registrations?.length || 0;
     const categoryName = item.category?.name || 'Sin categoría';
     const imageUrl = getImageUrl(item.image_url);
+    const hasMatches = item.next_matches && item.next_matches.length > 0;
+    const isDark = !!imageUrl; // Use dark text if there's no background image
+    const textColor = isDark ? '#fff' : '#333';
+    const secondaryTextColor = isDark ? 'rgba(255, 255, 255, 0.8)' : 'rgba(0, 0, 0, 0.6)';
 
     return (
-      
       <TouchableOpacity 
         style={cardStyle}
         onPress={() => {
@@ -99,23 +186,49 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
             }}
           >
             <View style={styles.cardContent}>
-              <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+              <Text style={[styles.cardTitle, { color: textColor }]} numberOfLines={1}>{item.name}</Text>
               <View style={styles.cardDetails}>
-                <Text style={styles.cardText}><Ionicons name="calendar" size={14} color="#fff" /> {startDate} - {endDate}</Text>
-                <Text style={styles.cardText}><Ionicons name="people" size={14} color="#fff" /> {teamsCount} equipos</Text>
-                <Text style={styles.cardText}><Ionicons name="trophy" size={14} color="#fff" /> {categoryName}</Text>
+                <Text style={[styles.cardText, { color: secondaryTextColor }]}>
+                  <Ionicons name="calendar" size={14} color={secondaryTextColor} /> {startDate} - {endDate}
+                </Text>
+                <Text style={[styles.cardText, { color: secondaryTextColor }]}>
+                  <Ionicons name="people" size={14} color={secondaryTextColor} /> {teamsCount} equipos
+                </Text>
+                <Text style={[styles.cardText, { color: secondaryTextColor }]}>
+                  <Ionicons name="trophy" size={14} color={secondaryTextColor} /> {categoryName}
+                </Text>
               </View>
+              
+              {hasMatches && (
+                <View style={styles.matchesContainer}>
+                  <Text style={[styles.upcomingMatchesTitle, { color: textColor }]}>Próximos partidos:</Text>
+                  {item.next_matches?.map((match) => renderMatchItem(match, !!imageUrl))}
+                </View>
+              )}
             </View>
           </ImageBackground>
         ) : (
-          <View style={[styles.cardImage, { backgroundColor: '#e0e0e0' }]}>
+          <View style={[styles.cardImage, { backgroundColor: '#f5f5f5' }]}>
             <View style={styles.cardContent}>
-              <Text style={styles.cardTitle} numberOfLines={1}>{item.name}</Text>
+              <Text style={[styles.cardTitle, { color: textColor }]} numberOfLines={1}>{item.name}</Text>
               <View style={styles.cardDetails}>
-                <Text style={styles.cardText}><Ionicons name="calendar" size={14} color="#333" /> {startDate} - {endDate}</Text>
-                <Text style={styles.cardText}><Ionicons name="people" size={14} color="#333" /> {teamsCount} equipos</Text>
-                <Text style={styles.cardText}><Ionicons name="trophy" size={14} color="#333" /> {categoryName}</Text>
+                <Text style={[styles.cardText, { color: secondaryTextColor }]}>
+                  <Ionicons name="calendar" size={14} color={secondaryTextColor} /> {startDate} - {endDate}
+                </Text>
+                <Text style={[styles.cardText, { color: secondaryTextColor }]}>
+                  <Ionicons name="people" size={14} color={secondaryTextColor} /> {teamsCount} equipos
+                </Text>
+                <Text style={[styles.cardText, { color: secondaryTextColor }]}>
+                  <Ionicons name="trophy" size={14} color={secondaryTextColor} /> {categoryName}
+                </Text>
               </View>
+              
+              {hasMatches && (
+                <View style={styles.matchesContainer}>
+                  <Text style={[styles.upcomingMatchesTitle, { color: textColor }]}>Próximos partidos:</Text>
+                  {item.next_matches?.map((match) => renderMatchItem(match, !!imageUrl))}
+                </View>
+              )}
             </View>
           </View>
         )}
@@ -124,6 +237,65 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
   };
 
   const styles = StyleSheet.create({
+  // ... existing styles ...
+  
+  matchesContainer: {
+    marginTop: 12,
+    width: '100%',
+  },
+  upcomingMatchesTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  matchItem: {
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  matchTeamsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  teamContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  teamLogoSmall: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    marginBottom: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  teamName: {
+    fontSize: 12,
+    textAlign: 'center',
+    maxWidth: 80,
+  },
+  matchScoreContainer: {
+    minWidth: 60,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  matchScore: {
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  matchTime: {
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  matchVenue: {
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 4,
+  },
     backgroundImage: {
       position: 'absolute',
       top: 0,
@@ -357,21 +529,44 @@ export default function TournamentsScreen({ onTournamentPress }: TournamentsScre
         return;
       }
 
-      // Process data to count teams per tournament
-      const processedData = data.map(tournament => {
-        console.log('Processing tournament:', tournament.id, tournament.name);
-        
-        const processedTournament = {
-          ...tournament,
-          teams_count: tournament.tournament_registrations?.length || 0,
-        };
-        
-        console.log('Processed tournament:', processedTournament);
-        return processedTournament;
-      });
+      // Fetch next 3 matches for each tournament
+      const tournamentsWithMatches = await Promise.all(
+        data.map(async (tournament) => {
+          // Get next 3 upcoming matches for this tournament
+          const { data: matchesData, error: matchesError } = await supabase
+            .from('matches')
+            .select(`
+              id,
+              tournament_id,
+              home_team_id,
+              away_team_id,
+              home_team:home_team_id (id, name, logo_url),
+              away_team:away_team_id (id, name, logo_url),
+              home_score,
+              away_score,
+              match_datetime,
+              status,
+              venue
+            `)
+            .eq('tournament_id', tournament.id)
+            .gte('match_datetime', new Date().toISOString())
+            .order('match_datetime', { ascending: true })
+            .limit(3);
 
-      console.log('Setting tournaments state with:', processedData);
-      setTournaments(processedData);
+          if (matchesError) {
+            console.error(`Error fetching matches for tournament ${tournament.id}:`, matchesError);
+          }
+
+          return {
+            ...tournament,
+            teams_count: tournament.tournament_registrations?.length || 0,
+            next_matches: matchesData || []
+          };
+        })
+      );
+
+      console.log('Setting tournaments state with:', tournamentsWithMatches);
+      setTournaments(tournamentsWithMatches);
     } catch (error) {
       console.error('Error fetching tournaments:', error);
     } finally {

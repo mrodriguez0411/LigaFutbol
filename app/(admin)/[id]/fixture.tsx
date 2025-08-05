@@ -89,7 +89,7 @@ export default function TournamentFixture() {
 
   const navigateToMatch = (matchId: string) => {
     router.push({
-      pathname: '/(admin)/[id]/match/[matchId]',
+      pathname: `/(admin)/${tournamentId}/match/${matchId}`,
       params: { id: tournamentId, matchId }
     } as any);
   };

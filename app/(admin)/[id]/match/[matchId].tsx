@@ -4,7 +4,7 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, FlatList, Image, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-type Player = {
+interface Player {
   id: string;
   first_name: string | null;
   last_name: string | null;
@@ -12,7 +12,21 @@ type Player = {
   goals: number;
   yellow_cards: number;
   red_card: boolean;
-  name?: string; // For backward compatibility
+  name?: string; // Campo opcional para el nombre completo
+}
+
+type EventType = 'goal' | 'yellow_card' | 'red_card';
+
+interface MatchEvent {
+  id: string;
+  type: EventType;
+  playerId: string;
+  playerName: string;
+  teamId: string;
+  teamName: string;
+  minute: number;
+  timestamp: Date;
+  details?: string;
 };
 
 interface Team {
@@ -24,6 +38,7 @@ interface Team {
 interface Match {
   id: string;
   home_team_id: string;
+  start_time?: string; // Add optional start_time field
   away_team_id: string;
   home_team_name: string;
   away_team_name: string;
@@ -51,64 +66,190 @@ export default function MatchResultScreen() {
   const [homePlayers, setHomePlayers] = useState<Player[]>([]);
   const [awayPlayers, setAwayPlayers] = useState<Player[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(true);
+  const [matchEvents, setMatchEvents] = useState<MatchEvent[]>([]);
+
+  // Log a match event
+  const logMatchEvent = (type: EventType, player: Player, teamId: string, eventId?: string) => {
+    if (!match) return null;
+    
+    const isHomeTeam = teamId === match.home_team_id;
+    const team = {
+      id: isHomeTeam ? match.home_team_id : match.away_team_id,
+      name: isHomeTeam ? match.home_team_name : match.away_team_name
+    };
+    
+    const matchStartTime = match.start_time ? new Date(match.start_time).getTime() : Date.now();
+    const currentMinute = Math.max(1, Math.floor((Date.now() - matchStartTime) / (1000 * 60)));
+    
+    const newEvent: MatchEvent = {
+      id: eventId || Date.now().toString(),
+      type,
+      playerId: player.id,
+      playerName: `${player.first_name || ''} ${player.last_name || ''}`.trim(),
+      teamId: team.id,
+      teamName: team.name || 'Equipo desconocido',
+      minute: currentMinute,
+      timestamp: new Date(),
+      details: type === 'goal' ? 'Gol' : type === 'yellow_card' ? 'Tarjeta amarilla' : 'Tarjeta roja'
+    };
+    
+    setMatchEvents(prev => [newEvent, ...prev]);
+    return newEvent.id;
+  };
+
+  // Remove a match event by player and type
+  const removeMatchEvent = (playerId: string, type: EventType) => {
+    setMatchEvents(prev => {
+      // Find the most recent event of the given type for this player
+      const eventIndex = prev.findIndex(e => e.playerId === playerId && e.type === type);
+      if (eventIndex === -1) return prev;
+      
+      // Create a new array without the event
+      const newEvents = [...prev];
+      newEvents.splice(eventIndex, 1);
+      return newEvents;
+    });
+  };
 
   // Handle goal changes for players
   const handleGoalChange = (player: Player, teamId: string, change: number) => {
-    const updatedPlayers = teamId === match?.home_team_id ? [...homePlayers] : [...awayPlayers];
+    if (!match) return;
+    
+    const updatedPlayers = teamId === match.home_team_id ? [...homePlayers] : [...awayPlayers];
     const playerIndex = updatedPlayers.findIndex(p => p.id === player.id);
-    if (playerIndex !== -1) {
-      const newGoals = Math.max(0, (updatedPlayers[playerIndex].goals || 0) + change);
-      updatedPlayers[playerIndex] = {
-        ...updatedPlayers[playerIndex],
-        goals: newGoals,
-      };
-      
-      if (teamId === match?.home_team_id) {
-        setHomePlayers(updatedPlayers);
-      } else {
-        setAwayPlayers(updatedPlayers);
-      }
+    if (playerIndex === -1) return;
+    
+    const currentGoals = updatedPlayers[playerIndex].goals || 0;
+    const newGoals = Math.max(0, currentGoals + change);
+    
+    // Update player's goals
+    updatedPlayers[playerIndex] = {
+      ...updatedPlayers[playerIndex],
+      goals: newGoals,
+    };
+    
+    // Handle event logging/removal
+    if (newGoals > currentGoals) {
+      // Goal added - log new event
+      logMatchEvent('goal', updatedPlayers[playerIndex], teamId);
+    } else if (newGoals < currentGoals) {
+      // Goal removed - remove the most recent goal event for this player
+      removeMatchEvent(player.id, 'goal');
+    }
+    
+    // Update the appropriate team's players
+    if (teamId === match.home_team_id) {
+      setHomePlayers(updatedPlayers);
+    } else {
+      setAwayPlayers(updatedPlayers);
     }
   };
 
   // Handle yellow card changes for players
   const handleYellowCardChange = (player: Player, teamId: string, change: number) => {
-    const updatedPlayers = teamId === match?.home_team_id ? [...homePlayers] : [...awayPlayers];
+    if (!match) return;
+    
+    const updatedPlayers = teamId === match.home_team_id ? [...homePlayers] : [...awayPlayers];
     const playerIndex = updatedPlayers.findIndex(p => p.id === player.id);
-    if (playerIndex !== -1) {
-      const newYellowCards = Math.max(0, (updatedPlayers[playerIndex].yellow_cards || 0) + change);
-      updatedPlayers[playerIndex] = {
-        ...updatedPlayers[playerIndex],
+    if (playerIndex === -1) return;
+    
+    const currentPlayer = updatedPlayers[playerIndex];
+    
+    // Don't allow changes if player has a red card (except to remove it)
+    if (currentPlayer.red_card && change >= 0) {
+      return;
+    }
+    
+    // Calculate new yellow cards count
+    let newYellowCards = currentPlayer.yellow_cards + change;
+    
+    // Ensure it's not less than 0 or more than 2
+    newYellowCards = Math.max(0, Math.min(2, newYellowCards));
+    
+    // If it's exactly 2, we'll give a red card
+    const willGetRedCard = newYellowCards === 2;
+    
+    // Only proceed if there's an actual change
+    if (newYellowCards !== currentPlayer.yellow_cards || (willGetRedCard && !currentPlayer.red_card)) {
+      // Create a copy of the player with updated values
+      const updatedPlayer = {
+        ...currentPlayer,
         yellow_cards: newYellowCards,
-        // Second yellow is a red card
-        red_card: newYellowCards >= 2,
+        red_card: willGetRedCard || currentPlayer.red_card
       };
       
-      if (teamId === match?.home_team_id) {
+      // Handle event logging
+      if (change > 0) {
+        // Adding a yellow card
+        logMatchEvent('yellow_card', updatedPlayer, teamId);
+        
+        // If this is the second yellow, also log a red card
+        if (willGetRedCard) {
+          logMatchEvent('red_card', updatedPlayer, teamId);
+        }
+      } else if (change < 0) {
+        // Removing a yellow card - remove the most recent yellow card event
+        removeMatchEvent(currentPlayer.id, 'yellow_card');
+        
+        // If we're removing the second yellow, also remove the red card
+        if (currentPlayer.yellow_cards === 2 && newYellowCards === 1) {
+          removeMatchEvent(currentPlayer.id, 'red_card');
+        }
+      }
+      
+      // Update the player in the array
+      updatedPlayers[playerIndex] = updatedPlayer;
+      
+      // Update the appropriate team's players
+      if (teamId === match.home_team_id) {
         setHomePlayers(updatedPlayers);
       } else {
         setAwayPlayers(updatedPlayers);
       }
+      
+      // Log the current state for debugging
+      console.log(`Player ${player.first_name} ${player.last_name} - Yellow cards: ${newYellowCards}, Red card: ${willGetRedCard}`);
     }
   };
 
   // Handle red card changes for players
   const handleRedCardChange = (player: Player, teamId: string, hasRedCard: boolean) => {
-    const updatedPlayers = teamId === match?.home_team_id ? [...homePlayers] : [...awayPlayers];
+    if (!match) return;
+    
+    const updatedPlayers = teamId === match.home_team_id ? [...homePlayers] : [...awayPlayers];
     const playerIndex = updatedPlayers.findIndex(p => p.id === player.id);
-    if (playerIndex !== -1) {
-      updatedPlayers[playerIndex] = {
-        ...updatedPlayers[playerIndex],
-        red_card: hasRedCard,
-        // Reset yellow cards if red card is removed
-        yellow_cards: hasRedCard ? 2 : 0, // Assuming 2 yellow cards = red card
-      };
+    if (playerIndex === -1) return;
+    
+    const currentPlayer = updatedPlayers[playerIndex];
+    
+    // If adding a red card (not removing)
+    if (hasRedCard) {
+      // Log red card event
+      logMatchEvent('red_card', currentPlayer, teamId);
       
-      if (teamId === match?.home_team_id) {
-        setHomePlayers(updatedPlayers);
-      } else {
-        setAwayPlayers(updatedPlayers);
-      }
+      // Update player state
+      updatedPlayers[playerIndex] = {
+        ...currentPlayer,
+        red_card: true,
+        yellow_cards: 0 // Reset any yellow cards
+      };
+    } else {
+      // Removing a red card - remove the red card event
+      removeMatchEvent(player.id, 'red_card');
+      
+      // Update player state
+      updatedPlayers[playerIndex] = {
+        ...currentPlayer,
+        red_card: false
+        // Keep existing yellow cards when removing red card
+      };
+    }
+    
+    // Update the appropriate team's players
+    if (teamId === match.home_team_id) {
+      setHomePlayers(updatedPlayers);
+    } else {
+      setAwayPlayers(updatedPlayers);
     }
   };
 
@@ -453,13 +594,61 @@ export default function MatchResultScreen() {
       <View style={styles.statContainer}>
         <Text style={styles.statValue}>{player.yellow_cards}</Text>
         <View style={styles.buttonGroup}>
-          <TouchableOpacity
-            style={[styles.statButton, styles.yellowCardButton]}
-            onPress={() => handleYellowCardChange(player, teamId, 1)}
-            disabled={saving || player.red_card}
-          >
-            <Ionicons name="warning" size={16} color="#f9a825" />
-          </TouchableOpacity>
+          <View style={styles.yellowCardsContainer}>
+            {/* Mostrar tarjeta(s) amarilla(s) solo si no tiene roja */}
+            {!player.red_card && (
+              <>
+                {/* Mostrar 1 tarjeta amarilla con botón de eliminar */}
+                {player.yellow_cards === 1 && (
+                  <View style={styles.yellowCardContainer}>
+                    <TouchableOpacity
+                      onPress={() => handleYellowCardChange(player, teamId, 1)}
+                      disabled={saving}
+                    >
+                      <View style={[styles.cardBadge, styles.yellowCardBadge, styles.singleCard]}>
+                        {/* Tarjeta amarilla sin texto */}
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={() => handleYellowCardChange(player, teamId, -1)}
+                      style={styles.removeCardButton}
+                      disabled={saving}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#ff4444" />
+                    </TouchableOpacity>
+                  </View>
+                )}
+                
+                {/* Mostrar 2 tarjetas amarillas (que se convierten en roja) */}
+                {player.yellow_cards === 2 && (
+                  <View style={styles.yellowCardsWrapper}>
+                    <View style={[styles.cardBadge, styles.yellowCardBadge, styles.firstCard]} />
+                    <View style={[styles.cardBadge, styles.yellowCardBadge, styles.secondCard]} />
+                  </View>
+                )}
+                
+                {/* Botón para primera tarjeta si no hay ninguna */}
+                {player.yellow_cards === 0 && (
+                  <TouchableOpacity
+                    style={[styles.statButton, styles.yellowCardButton, { marginLeft: player.yellow_cards > 0 ? 15 : 0 }]}
+                    onPress={() => handleYellowCardChange(player, teamId, 1)}
+                    disabled={saving}
+                  >
+                    <View style={[styles.cardBadge, styles.yellowCardBadge]} />
+                  </TouchableOpacity>
+                )}
+              </>
+            )}
+            
+            {/* Mostrar tarjeta roja si corresponde */}
+            {player.red_card && (
+              <View style={[styles.cardBadge, styles.redCardBadge]}>
+                <Text style={styles.redCardText}>ROJA</Text>
+              </View>
+            )}
+          </View>
+          
+          {/* Botón para quitar tarjeta amarilla */}
           <TouchableOpacity
             style={[styles.statButton, styles.yellowCardButton]}
             onPress={() => handleYellowCardChange(player, teamId, -1)}
@@ -481,11 +670,18 @@ export default function MatchResultScreen() {
           onPress={() => handleRedCardChange(player, teamId, !player.red_card)}
           disabled={saving}
         >
-          <Ionicons 
-            name={player.red_card ? 'close-circle' : 'close-circle-outline'} 
-            size={16} 
-            color={player.red_card ? '#fff' : '#f44336'} 
-          />
+          <View style={[
+            styles.cardBadge,
+            player.red_card ? styles.redCardBadge : styles.redCardInactive,
+            { transform: [{ rotate: '0deg' }] }
+          ]}>
+            <Text style={[
+              styles.cardText,
+              player.red_card ? styles.redCardText : styles.redCardInactiveText
+            ]}>
+              {player.red_card ? 'ROJA' : 'ROJA'}
+            </Text>
+          </View>
         </TouchableOpacity>
       </View>
     </View>
@@ -590,8 +786,8 @@ export default function MatchResultScreen() {
             </View>
           </View>
           
-          <View style={styles.legendContainer}>
-            {/*<View style={styles.legendItem}>
+         {/* <View style={styles.legendContainer}>
+            <View style={styles.legendItem}>
               <Ionicons name="football" size={16} color="#2e7d32" />
               <Text style={styles.legendText}>Goles</Text>
             </View>
@@ -602,10 +798,41 @@ export default function MatchResultScreen() {
             <View style={styles.legendItem}>
               <Ionicons name="close-circle" size={16} color="#f44336" />
               <Text style={styles.legendText}>Rojas</Text>
-            </View>*/}
+            </View>
             <View style={styles.legendItem}>ESTADISTICAS</View>
+          </View>*/}
+          {/* Match Events */}
+          <View style={styles.eventsContainer}>
+            <Text style={styles.sectionTitle}>Eventos del Partido</Text>
+            {matchEvents.length === 0 ? (
+              <Text style={styles.noEventsText}>No hay eventos registrados</Text>
+            ) : (
+              <FlatList
+                data={matchEvents}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => (
+                  <View style={[
+                    styles.eventItem,
+                    item.type === 'goal' && styles.goalEvent,
+                    item.type === 'yellow_card' && styles.yellowCardEvent,
+                    item.type === 'red_card' && styles.redCardEvent
+                  ]}>
+                    <Text style={styles.eventMinute}>{item.minute}'</Text>
+                    <View style={styles.eventContent}>
+                      <Text style={styles.eventPlayer}>{item.playerName}</Text>
+                      <Text style={styles.eventTeam}>{item.teamName}</Text>
+                    </View>
+                    <Text style={styles.eventType}>
+                      {item.type === 'goal' ? '⚽ Gol' : 
+                       item.type === 'yellow_card' ? '🟨 Amarilla' : '🟥 Roja'}
+                    </Text>
+                  </View>
+                )}
+              />
+            )}
           </View>
           
+          {/* Player list */}
           <View style={styles.playersContainer}>
             {/* Home Team Players */}
             <View style={styles.teamPlayers}>
@@ -657,6 +884,65 @@ export default function MatchResultScreen() {
 }
 
 const styles = StyleSheet.create({
+  // Event styles
+  eventsContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 15,
+    margin: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+    color: '#333',
+  },
+  noEventsText: {
+    textAlign: 'center',
+    color: '#666',
+    fontStyle: 'italic',
+  },
+  eventItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  goalEvent: {
+    backgroundColor: 'rgba(46, 125, 50, 0.05)',
+  },
+  yellowCardEvent: {
+    backgroundColor: 'rgba(255, 235, 59, 0.1)',
+  },
+  redCardEvent: {
+    backgroundColor: 'rgba(244, 67, 54, 0.1)',
+  },
+  eventMinute: {
+    fontWeight: 'bold',
+    width: 30,
+    color: '#666',
+  },
+  eventContent: {
+    flex: 1,
+  },
+  eventPlayer: {
+    fontWeight: '500',
+  },
+  eventTeam: {
+    fontSize: 12,
+    color: '#666',
+  },
+  eventType: {
+    fontWeight: 'bold',
+  },
+  
+  // Existing styles
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
@@ -841,6 +1127,111 @@ const styles = StyleSheet.create({
   activeRedCard: {
     backgroundColor: '#f44336',
   },
+  // Estilos para las tarjetas
+  yellowCardsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 40,
+    height: 40,
+    position: 'relative',
+  },
+  singleCard: {
+    position: 'relative',
+    marginRight: 10,
+  },
+  cardBadge: {
+    width: 24,  // Ancho reducido para el diseño de tarjeta
+    height: 36, // Altura aumentada para mejor proporción
+    borderRadius: 4,  // Bordes más redondeados
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,  // Borde ligeramente más grueso
+    borderColor: '#000',
+    margin: 2,
+  },
+  // Tarjeta amarilla
+  yellowCardBadge: {
+    backgroundColor: '#FFD700',
+    borderColor: '#000',
+    width: 24,
+    height: 36,
+    borderRadius: 4,
+    borderWidth: 1.5,
+  },
+  // Tarjeta roja
+  redCardBadge: {
+    backgroundColor: '#FF0000',
+    borderColor: '#000',
+    width: 24,
+    height: 36,
+    borderRadius: 4,
+    borderWidth: 1.5,
+  },
+  redCardInactive: {
+    backgroundColor: 'transparent',
+    borderColor: '#FF0000',
+    width: 24,
+    height: 36,
+    borderRadius: 4,
+    borderWidth: 1.5,
+  },
+  // Texto de tarjeta roja inactiva
+  redCardInactiveText: {
+    color: '#FF0000',
+  },
+  // Texto de tarjeta roja activa
+  redCardText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  // Contenedor de tarjetas amarillas
+  yellowCardContainer: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  // Botón para eliminar tarjeta
+  removeCardButton: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: 'white',
+    borderRadius: 10,
+    width: 20,
+    height: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 3,
+  },
+  // Contenedor para mostrar múltiples tarjetas amarillas
+  yellowCardsWrapper: {
+    position: 'relative',
+    width: 40,
+    height: 40,
+    marginRight: 10,
+  },
+  // Primera tarjeta cuando hay dos
+  firstCard: {
+    position: 'absolute',
+    left: 0,
+    zIndex: 1,
+    width: 24,
+    height: 36,
+  },
+  // Segunda tarjeta superpuesta
+  secondCard: {
+    position: 'absolute',
+    left: 12,
+    zIndex: 2,
+    width: 24,
+    height: 36,
+  },
+  // Estilo del texto en las tarjetas (oculto para tarjeta amarilla)
+  cardText: {
+    display: 'none',
+  },
   buttonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -946,28 +1337,5 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 20,
     fontWeight: 'bold',
-  },
-  activeRedCard: {
-    backgroundColor: '#f44336',
-  },
-  statButton: {
-    padding: 4,
-    borderRadius: 4,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 28,
-    height: 28,
-  },
-  goalButton: {
-    backgroundColor: '#e8f5e9',
-  },
-  yellowCardButton: {
-    backgroundColor: '#fffde7',
-  },
-  redCardButton: {
-    backgroundColor: '#ffebee',
-  },
-  activeRedCard: {
-    backgroundColor: '#f44336',
   },
 });

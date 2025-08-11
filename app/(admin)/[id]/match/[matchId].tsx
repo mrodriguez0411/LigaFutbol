@@ -101,8 +101,45 @@ export default function MatchResultScreen() {
   const removeMatchEvent = (playerId: string, type: EventType) => {
     setMatchEvents(prev => {
       // Find the most recent event of the given type for this player
-      const eventIndex = prev.findIndex(e => e.playerId === playerId && e.type === type);
+      // Also check for own goals by playerName since the ID might not match
+      const eventIndex = prev.findIndex(e => 
+        (e.playerId === playerId || 
+         (playerId === 'own-goal' && e.playerName === 'Gol en Contra')) && 
+        e.type === type
+      );
+      
       if (eventIndex === -1) return prev;
+      
+      // Get the event being removed
+      const eventToRemove = prev[eventIndex];
+      
+      // Update the score if it's a goal being removed
+      if (eventToRemove.type === 'goal') {
+        const isHomeTeam = eventToRemove.teamId === match?.home_team_id;
+        const isOwnGoal = eventToRemove.playerName === 'Gol en Contra';
+        
+        if (isOwnGoal) {
+          // For own goals, the team that scored is the opposite team
+          if (isHomeTeam) {
+            // Own goal by home team means away team scored
+            const newScore = Math.max(0, (parseInt(awayScore) || 0) - 1);
+            setAwayScore(newScore.toString());
+          } else {
+            // Own goal by away team means home team scored
+            const newScore = Math.max(0, (parseInt(homeScore) || 0) - 1);
+            setHomeScore(newScore.toString());
+          }
+        } else {
+          // Regular goal
+          if (isHomeTeam) {
+            const newScore = Math.max(0, (parseInt(homeScore) || 0) - 1);
+            setHomeScore(newScore.toString());
+          } else {
+            const newScore = Math.max(0, (parseInt(awayScore) || 0) - 1);
+            setAwayScore(newScore.toString());
+          }
+        }
+      }
       
       // Create a new array without the event
       const newEvents = [...prev];
@@ -112,6 +149,39 @@ export default function MatchResultScreen() {
   };
 
   // Handle goal changes for players
+  // Handle own goal (adds to the opposing team's score)
+  const handleOwnGoal = (teamId: string) => {
+    if (!match) return;
+    
+    // Determine which team scored the own goal and which team gets the goal
+    const isHomeTeam = teamId === match.home_team_id;
+    const scoringTeamId = isHomeTeam ? match.away_team_id : match.home_team_id;
+    
+    // Log the own goal event (using a special player ID for own goals)
+    const ownGoalPlayer: Player = {
+      id: 'own-goal',
+      first_name: 'Gol en',
+      last_name: 'Contra',
+      team_id: teamId,  // Team that committed the own goal
+      goals: 0,
+      yellow_cards: 0,
+      red_card: false
+    };
+    
+    // Log the event with the team that committed the own goal
+    // The scoringTeamId is passed as a separate parameter to update the score
+    logMatchEvent('goal', ownGoalPlayer, teamId);
+    
+    // Update the score for the opposing team
+    if (isHomeTeam) {
+      const newAwayScore = (parseInt(awayScore) || 0) + 1;
+      setAwayScore(newAwayScore.toString());
+    } else {
+      const newHomeScore = (parseInt(homeScore) || 0) + 1;
+      setHomeScore(newHomeScore.toString());
+    }
+  };
+
   const handleGoalChange = (player: Player, teamId: string, change: number) => {
     if (!match) return;
     
@@ -609,6 +679,13 @@ export default function MatchResultScreen() {
           >
             <Text style={{ color: '#2e7d32', fontWeight: 'bold' }}>-</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.statButton, styles.ownGoalButton]}
+            onPress={() => handleOwnGoal(teamId)}
+            disabled={saving || player.red_card}
+          >
+            <Text style={styles.ownGoalButtonText}>GC</Text>
+          </TouchableOpacity>
         </View>
       </View>
       
@@ -772,13 +849,9 @@ export default function MatchResultScreen() {
                 <Text style={styles.teamName}>{match.home_team_name}</Text>
               </View>
               <View style={styles.scoreContainer}>
-                <TextInput
-                  style={styles.scoreInput}
-                  value={homeScore}
-                  onChangeText={setHomeScore}
-                  keyboardType="number-pad"
-                  maxLength={2}
-                />
+                <Text style={styles.scoreDisplay}>
+                  {homeScore}
+                </Text>
               </View>
             </View>
             
@@ -796,57 +869,46 @@ export default function MatchResultScreen() {
                 <Text style={styles.teamName}>{match.away_team_name}</Text>
               </View>
               <View style={styles.scoreContainer}>
-                <TextInput
-                  style={styles.scoreInput}
-                  value={awayScore}
-                  onChangeText={setAwayScore}
-                  keyboardType="number-pad"
-                  maxLength={2}
-                />
+                <Text style={styles.scoreDisplay}>
+                  {awayScore}
+                </Text>
               </View>
             </View>
           </View>
           
-         {/* <View style={styles.legendContainer}>
-            <View style={styles.legendItem}>
-              <Ionicons name="football" size={16} color="#2e7d32" />
-              <Text style={styles.legendText}>Goles</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <Ionicons name="warning" size={16} color="#f9a825" />
-              <Text style={styles.legendText}>Amarillas</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <Ionicons name="close-circle" size={16} color="#f44336" />
-              <Text style={styles.legendText}>Rojas</Text>
-            </View>
-            <View style={styles.legendItem}>ESTADISTICAS</View>
-          </View>*/}
-          {/* Match Events */}
-          <View style={styles.eventsContainer}>
+          {/* Events Section */}
+          <View style={[styles.eventsSection, { marginTop: 20 }]}>
             <Text style={styles.sectionTitle}>Eventos del Partido</Text>
             {matchEvents.length === 0 ? (
               <Text style={styles.noEventsText}>No hay eventos registrados</Text>
             ) : (
               <FlatList
                 data={matchEvents}
-                keyExtractor={(item) => item.id}
-                renderItem={({ item }) => (
+                keyExtractor={(item, index) => `${item.id}-${index}`}
+                renderItem={({ item, index }) => (
                   <View style={[
                     styles.eventItem,
-                    item.type === 'goal' && styles.goalEvent,
-                    item.type === 'yellow_card' && styles.yellowCardEvent,
-                    item.type === 'red_card' && styles.redCardEvent
+                    item.type.toLowerCase() === 'goal' && styles.goalEvent,
+                    item.type.toLowerCase() === 'yellow_card' && styles.yellowCardEvent,
+                    item.type.toLowerCase() === 'red_card' && styles.redCardEvent
                   ]}>
                     <Text style={styles.eventMinute}>{item.minute}'</Text>
                     <View style={styles.eventContent}>
-                      <Text style={styles.eventPlayer}>{item.playerName}</Text>
+                      <Text style={styles.eventPlayer}>
+                        {item.playerName === 'Gol en Contra' ? 'Gol en Contra' : item.playerName}
+                      </Text>
                       <Text style={styles.eventTeam}>{item.teamName}</Text>
                     </View>
                     <Text style={styles.eventType}>
                       {item.type === 'goal' ? '⚽ Gol' : 
                        item.type === 'yellow_card' ? '🟨 Amarilla' : '🟥 Roja'}
                     </Text>
+                    <TouchableOpacity 
+                      onPress={() => removeMatchEvent(item.playerId, item.type)}
+                      style={styles.removeEventButton}
+                    >
+                      <Ionicons name="close-circle" size={20} color="#ff4444" />
+                    </TouchableOpacity>
                   </View>
                 )}
               />
@@ -905,12 +967,12 @@ export default function MatchResultScreen() {
 }
 
 const styles = StyleSheet.create({
-  // Event styles
-  eventsContainer: {
+  // Events Section
+  eventsSection: {
+    marginTop: 20,
     backgroundColor: '#fff',
     borderRadius: 10,
     padding: 15,
-    margin: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -942,7 +1004,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 235, 59, 0.1)',
   },
   redCardEvent: {
-    backgroundColor: 'rgba(244, 67, 54, 0.1)',
+    backgroundColor: '#FFEBEE',
+    borderRadius: 6,
+    marginVertical: 4,
+    borderLeftWidth: 4,
+    borderLeftColor: '#F44336',
+    borderBottomWidth: 0,
+    paddingHorizontal: 10,
   },
   eventMinute: {
     fontWeight: 'bold',
@@ -962,8 +1030,9 @@ const styles = StyleSheet.create({
   eventType: {
     fontWeight: 'bold',
   },
-  
-  // Existing styles
+  removeEventButton: {
+    padding: 5,
+  },
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
@@ -1029,18 +1098,39 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  scoreDisplay: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    width: 50,
+    height: 50,
+    lineHeight: 50,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    marginHorizontal: 5,
+  },
   scoreInput: {
     fontSize: 24,
     fontWeight: 'bold',
     textAlign: 'center',
+    width: 50,
+    height: 50,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 6,
-    width: 60,
-    height: 60,
-    padding: 0,
-    marginHorizontal: 5,
-    lineHeight: 60,
+    borderColor: '#ef9a9a',
+    marginLeft: 4,
+    paddingHorizontal: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 24,
+  },
+  ownGoalButtonText: {
+    color: '#c62828',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
   vsText: {
     fontSize: 18,

@@ -122,19 +122,40 @@ export default function MatchResultScreen() {
     const currentGoals = updatedPlayers[playerIndex].goals || 0;
     const newGoals = Math.max(0, currentGoals + change);
     
+    // Calculate the difference in goals
+    const goalDiff = newGoals - currentGoals;
+    
     // Update player's goals
     updatedPlayers[playerIndex] = {
       ...updatedPlayers[playerIndex],
       goals: newGoals,
     };
     
-    // Handle event logging/removal
-    if (newGoals > currentGoals) {
-      // Goal added - log new event
+    // Handle event logging/removal and update score
+    if (goalDiff > 0) {
+      // Goal added - log new event and update score
       logMatchEvent('goal', updatedPlayers[playerIndex], teamId);
-    } else if (newGoals < currentGoals) {
-      // Goal removed - remove the most recent goal event for this player
+      
+      // Update the score based on which team scored
+      if (teamId === match.home_team_id) {
+        const newScore = (parseInt(homeScore) || 0) + goalDiff;
+        setHomeScore(newScore.toString());
+      } else {
+        const newScore = (parseInt(awayScore) || 0) + goalDiff;
+        setAwayScore(newScore.toString());
+      }
+    } else if (goalDiff < 0) {
+      // Goal removed - remove the most recent goal event for this player and update score
       removeMatchEvent(player.id, 'goal');
+      
+      // Update the score based on which team had a goal removed
+      if (teamId === match.home_team_id) {
+        const newScore = Math.max(0, (parseInt(homeScore) || 0) + goalDiff);
+        setHomeScore(newScore.toString());
+      } else {
+        const newScore = Math.max(0, (parseInt(awayScore) || 0) + goalDiff);
+        setAwayScore(newScore.toString());
+      }
     }
     
     // Update the appropriate team's players
@@ -1009,16 +1030,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   scoreInput: {
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: 'bold',
     textAlign: 'center',
     borderWidth: 1,
     borderColor: '#ddd',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    minWidth: 50,
+    borderRadius: 6,
+    width: 60,
+    height: 60,
+    padding: 0,
     marginHorizontal: 5,
+    lineHeight: 60,
   },
   vsText: {
     fontSize: 18,

@@ -1,4 +1,4 @@
-import { Stack, useLocalSearchParams, useRouter, useNavigation } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { 
   ActivityIndicator, 
@@ -36,6 +36,8 @@ export default function TournamentFixture() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedRounds, setExpandedRounds] = useState<Record<number, boolean>>({});
+  
+  // Header is configured in the Stack.Screen options below
 
   useEffect(() => {
     fetchMatches();

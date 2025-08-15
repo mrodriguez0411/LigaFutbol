@@ -109,7 +109,6 @@ export default function PlayerForm() {
     photo_url: null,
     team_id: teamId || null,
     status: 'active',
-    number: null,
     suspensions: [],
   }));
   
@@ -132,13 +131,13 @@ export default function PlayerForm() {
       const filePath = `${path}/${fileName}`;
       
       const { error: uploadError } = await supabase.storage
-        .from('players')
+        .from('jugadores')
         .upload(filePath, blob);
       
       if (uploadError) throw uploadError;
       
       const { data: { publicUrl } } = supabase.storage
-        .from('players')
+        .from('jugadores')
         .getPublicUrl(filePath);
       
       return publicUrl;
@@ -479,17 +478,31 @@ export default function PlayerForm() {
       
       // Mostrar mensaje de éxito y navegar de regreso
       Alert.alert(
-        'Éxito',
+        '¡Éxito!',
         `Jugador ${playerId ? 'actualizado' : 'creado'} correctamente`,
         [
           {
             text: 'Aceptar',
             onPress: () => {
-              goBackToPlayers();
+              // Navegar de regreso después de cerrar el alerta
+              if (router.canGoBack()) {
+                router.back();
+              } else {
+                router.replace('/(admin)/players');
+              }
             }
           }
         ]
       );
+      
+      // Si el usuario no presiona el botón, navegar después de 2 segundos
+      setTimeout(() => {
+        if (router.canGoBack()) {
+          router.back();
+        } else {
+          router.replace('/(admin)/players');
+        }
+      }, 2000);
       
     } catch (error: any) {
       console.error('Error al guardar el jugador:', error);
@@ -809,7 +822,7 @@ export default function PlayerForm() {
         </View>
 
 
-        <View style={styles.formGroup}>
+<View style={styles.formGroup}>
           <Text style={styles.label}>Equipo</Text>
           <TeamSelector
             selectedTeamId={formData.team_id || null}

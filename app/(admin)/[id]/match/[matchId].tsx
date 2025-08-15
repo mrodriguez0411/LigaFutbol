@@ -1,8 +1,8 @@
 import { supabase } from '@/config/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Image, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, Image, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 interface Player {
   id: string;
@@ -61,15 +61,86 @@ export default function MatchResultScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const isSaving = saving; // Alias for consistency with existing code
-  const [homeScore, setHomeScore] = useState<string>('');
-  const [awayScore, setAwayScore] = useState<string>('');
+  const [homeScore, setHomeScore] = useState<string>('0');
+  const [awayScore, setAwayScore] = useState<string>('0');
   const [homePlayers, setHomePlayers] = useState<Player[]>([]);
   const [awayPlayers, setAwayPlayers] = useState<Player[]>([]);
   const [loadingPlayers, setLoadingPlayers] = useState(true);
   const [matchEvents, setMatchEvents] = useState<MatchEvent[]>([]);
+  
+  // Ensure matchId is always a string
+  const safeMatchId = Array.isArray(matchId) ? matchId[0] : matchId || '';
+  const safeTournamentId = Array.isArray(tournamentId) ? tournamentId[0] : tournamentId || '';
 
+  // Load match and player data
+  useEffect(() => {
+    const fetchMatchAndPlayers = async () => {
+      if (!safeMatchId) return;
+      
+      try {
+        setLoading(true);
+        
+        // Fetch match data
+        const { data: matchData, error: matchError } = await supabase
+          .from('matches')
+          .select('*')
+          .eq('id', safeMatchId)
+          .single();
+          
+        if (matchError) throw matchError;
+        if (!matchData) {
+          Alert.alert('Error', 'Partido no encontrado');
+          router.back();
+          return;
+        }
+        
+        setMatch(matchData);
+        setHomeScore(matchData.home_team_score?.toString() || '0');
+        setAwayScore(matchData.away_team_score?.toString() || '0');
+        
+        // Fetch players for both teams
+        const { data: playersData, error: playersError } = await supabase
+          .from('players')
+          .select('*')
+          .in('team_id', [matchData.home_team_id, matchData.away_team_id]);
+          
+        if (playersError) throw playersError;
+        
+        // Separate players by team
+        const homePlayersData = playersData.filter(p => p.team_id === matchData.home_team_id);
+        const awayPlayersData = playersData.filter(p => p.team_id === matchData.away_team_id);
+        
+        setHomePlayers(homePlayersData);
+        setAwayPlayers(awayPlayersData);
+        
+        // Fetch match events
+        const { data: eventsData, error: eventsError } = await supabase
+          .from('match_events')
+          .select('*')
+          .eq('match_id', safeMatchId)
+          .order('minute', { ascending: true });
+          
+        if (eventsError) throw eventsError;
+        
+        setMatchEvents(eventsData || []);
+        
+      } catch (error) {
+        console.error('Error loading match data:', error);
+        Alert.alert('Error', 'No se pudo cargar la información del partido');
+      } finally {
+        setLoading(false);
+        setLoadingPlayers(false);
+      }
+    };
+    
+    fetchMatchAndPlayers();
+  }, [safeMatchId, router]);
+
+  // Define EventType if not already defined
+  type EventType = 'goal' | 'yellow_card' | 'red_card';
+  
   // Log a match event
-  const logMatchEvent = (type: EventType, player: Player, teamId: string, eventId?: string) => {
+  const logMatchEvent = useCallback((type: EventType, player: Player, teamId: string, eventId?: string) => {
     if (!match) return null;
     
     const isHomeTeam = teamId === match.home_team_id;
@@ -95,10 +166,10 @@ export default function MatchResultScreen() {
     
     setMatchEvents(prev => [newEvent, ...prev]);
     return newEvent.id;
-  };
+  }, [match]);
 
   // Remove a match event by player and type
-  const removeMatchEvent = (playerId: string, type: EventType) => {
+  const removeMatchEvent = useCallback((playerId: string, type: EventType) => {
     setMatchEvents(prev => {
       // Find the most recent event of the given type for this player
       // Also check for own goals by playerName since the ID might not match
@@ -146,11 +217,11 @@ export default function MatchResultScreen() {
       newEvents.splice(eventIndex, 1);
       return newEvents;
     });
-  };
+  }, [homeScore, awayScore, match?.home_team_id]);
 
   // Handle goal changes for players
   // Handle own goal (adds to the opposing team's score)
-  const handleOwnGoal = (teamId: string) => {
+  const handleOwnGoal = useCallback((teamId: string) => {
     if (!match) return;
     
     // Determine which team scored the own goal and which team gets the goal
@@ -180,9 +251,9 @@ export default function MatchResultScreen() {
       const newHomeScore = (parseInt(homeScore) || 0) + 1;
       setHomeScore(newHomeScore.toString());
     }
-  };
+  }, [match, homeScore, awayScore, logMatchEvent]);
 
-  const handleGoalChange = (player: Player, teamId: string, change: number) => {
+  const handleGoalChange = useCallback((player: Player, teamId: string, change: number) => {
     if (!match) return;
     
     const updatedPlayers = teamId === match.home_team_id ? [...homePlayers] : [...awayPlayers];
@@ -234,10 +305,10 @@ export default function MatchResultScreen() {
     } else {
       setAwayPlayers(updatedPlayers);
     }
-  };
+  }, [match, homePlayers, awayPlayers, homeScore, awayScore, logMatchEvent, removeMatchEvent, setHomePlayers, setAwayPlayers, setHomeScore, setAwayScore]);
 
   // Handle yellow card changes for players
-  const handleYellowCardChange = (player: Player, teamId: string, change: number) => {
+  const handleYellowCardChange = useCallback((player: Player, teamId: string, change: number) => {
     if (!match) return;
     
     const updatedPlayers = teamId === match.home_team_id ? [...homePlayers] : [...awayPlayers];
@@ -301,10 +372,10 @@ export default function MatchResultScreen() {
       // Log the current state for debugging
       console.log(`Player ${player.first_name} ${player.last_name} - Yellow cards: ${newYellowCards}, Red card: ${willGetRedCard}`);
     }
-  };
+  }, [match, homePlayers, awayPlayers, logMatchEvent, removeMatchEvent, setHomePlayers, setAwayPlayers]);
 
   // Handle red card changes for players
-  const handleRedCardChange = (player: Player, teamId: string, hasRedCard: boolean) => {
+  const handleRedCardChange = useCallback((player: Player, teamId: string, hasRedCard: boolean) => {
     if (!match) return;
     
     const updatedPlayers = teamId === match.home_team_id ? [...homePlayers] : [...awayPlayers];
@@ -342,7 +413,9 @@ export default function MatchResultScreen() {
     } else {
       setAwayPlayers(updatedPlayers);
     }
-  };
+  }, [match, homePlayers, awayPlayers, logMatchEvent, removeMatchEvent, setHomePlayers, setAwayPlayers]);
+
+
 
   useEffect(() => {
     fetchMatch();
@@ -503,154 +576,253 @@ export default function MatchResultScreen() {
         'Error al cargar el partido', 
         error instanceof Error ? error.message : 'Ocurrió un error inesperado'
       );
-      // Optionally navigate back on error
-      // setTimeout(() => router.back(), 2000);
     } finally {
       setLoading(false);
       setLoadingPlayers(false);
     }
   };
 
-  const handleSaveResult = async () => {
+  const handleSaveResult = useCallback(async () => {
+    if (!match) {
+      console.error('No se pudo cargar la información del partido');
+      Alert.alert('Error', 'No se pudo cargar la información del partido');
+      return;
+    }
+    
     if (!homeScore || !awayScore) {
       Alert.alert('Error', 'Por favor ingrese el resultado completo');
       return;
     }
 
+    setSaving(true);
+
     try {
-      setSaving(true);
+      const homeScoreValue = Number(homeScore) || 0;
+      const awayScoreValue = Number(awayScore) || 0;
       
-      // Save match result
-      const { error: matchError } = await supabase
+      console.log('Actualizando marcador del partido:', {
+        matchId: safeMatchId,
+        homeScore: homeScoreValue,
+        awayScore: awayScoreValue,
+        homeTeamId: match.home_team_id,
+        awayTeamId: match.away_team_id
+      });
+      
+      // Actualizar el marcador del partido
+      const { data: updatedMatch, error: matchError } = await supabase
         .from('matches')
         .update({
-          home_team_score: parseInt(homeScore, 10),
-          away_team_score: parseInt(awayScore, 10),
-          status: 'completed'
+          home_team_score: homeScoreValue,
+          away_team_score: awayScoreValue,
+          status: 'completed',
+          updated_at: new Date().toISOString()
         })
-        .eq('id', matchId);
+        .eq('id', safeMatchId)
+        .select()
+        .single();
 
-      if (matchError) throw matchError;
-      
-      // Prepare match events data
-      const matchEvents = [];
-      
-      // Process home team events
-      for (const player of homePlayers) {
-        // Add goals
-        if (player.goals > 0) {
-          matchEvents.push(
-            ...Array(player.goals).fill(0).map(() => ({
-              player_id: player.id,
-              match_id: matchId,
-              team_id: match?.home_team_id,
-              event_type: 'goal',
-              created_at: new Date().toISOString()
-            }))
-          );
-        }
-        
-        // Add yellow cards
-        if (player.yellow_cards > 0) {
-          matchEvents.push(
-            ...Array(player.yellow_cards).fill(0).map(() => ({
-              player_id: player.id,
-              match_id: matchId,
-              team_id: match?.home_team_id,
-              event_type: 'yellow_card',
-              created_at: new Date().toISOString()
-            }))
-          );
-        }
-        
-        // Add red card if any
-        if (player.red_card) {
-          matchEvents.push({
-            player_id: player.id,
-            match_id: matchId,
-            team_id: match?.home_team_id,
-            event_type: 'red_card',
-            created_at: new Date().toISOString()
-          });
-        }
+      if (matchError) {
+        console.error('Error al actualizar el marcador del partido:', matchError);
+        throw matchError;
       }
       
-      // Process away team events
-      for (const player of awayPlayers) {
-        // Add goals
+      console.log('Marcador actualizado correctamente:', updatedMatch);
+
+      // Preparar eventos
+      const matchEvents: MatchEvent[] = [];
+      const now = new Date();
+      
+      // Función para agregar eventos de un jugador
+      const processPlayerEvents = (player: Player, teamId: string, teamName: string, teamType: 'home' | 'away') => {
+        const playerName = `${player.first_name || ''} ${player.last_name || ''}`.trim();
+        
+        // Agregar goles
         if (player.goals > 0) {
-          matchEvents.push(
-            ...Array(player.goals).fill(0).map(() => ({
-              player_id: player.id,
-              match_id: matchId,
-              team_id: match?.away_team_id,
-              event_type: 'goal',
-              created_at: new Date().toISOString()
-            }))
-          );
+          console.log(`[${teamType}] Agregando ${player.goals} goles para ${playerName}`);
+          for (let i = 0; i < player.goals; i++) {
+            matchEvents.push({
+              id: `${player.id}-goal-${i}-${Date.now()}`,
+              type: 'goal',
+              playerId: player.id,
+              playerName: playerName,
+              teamId: teamId,
+              teamName: teamName,
+              minute: 0, // TODO: Implementar lógica para el minuto
+              timestamp: now,
+              details: `Gol de ${playerName}`
+            });
+          }
         }
         
-        // Add yellow cards
+        // Agregar tarjetas amarillas
         if (player.yellow_cards > 0) {
-          matchEvents.push(
-            ...Array(player.yellow_cards).fill(0).map(() => ({
-              player_id: player.id,
-              match_id: matchId,
-              team_id: match?.away_team_id,
-              event_type: 'yellow_card',
-              created_at: new Date().toISOString()
-            }))
-          );
+          console.log(`[${teamType}] Agregando ${player.yellow_cards} tarjetas amarillas para ${playerName}`);
+          for (let i = 0; i < player.yellow_cards; i++) {
+            matchEvents.push({
+              id: `${player.id}-yellow-${i}-${Date.now()}`,
+              type: 'yellow_card',
+              playerId: player.id,
+              playerName: playerName,
+              teamId: teamId,
+              teamName: teamName,
+              minute: 0, // TODO: Implementar lógica para el minuto
+              timestamp: now,
+              details: `Tarjeta amarilla a ${playerName}`
+            });
+          }
         }
         
-        // Add red card if any
+        // Agregar tarjeta roja si corresponde
         if (player.red_card) {
+          console.log(`[${teamType}] Agregando tarjeta roja para ${playerName}`);
           matchEvents.push({
-            player_id: player.id,
-            match_id: matchId,
-            team_id: match?.away_team_id,
-            event_type: 'red_card',
+            id: `${player.id}-red-${Date.now()}`,
+            type: 'red_card',
+            playerId: player.id,
+            playerName: playerName,
+            teamId: teamId,
+            teamName: teamName,
+            minute: 0, // TODO: Implementar lógica para el minuto
+            timestamp: now,
+            details: `Tarjeta roja a ${playerName}`
           });
         }
       };
-
-      // Save all events
+      
+      // Procesar jugadores del equipo local
+      console.log('Procesando jugadores del equipo local...');
+      homePlayers.forEach(player => {
+        processPlayerEvents(player, match.home_team_id, match.home_team_name, 'home');
+      });
+      
+      // Procesar jugadores del equipo visitante
+      console.log('Procesando jugadores del equipo visitante...');
+      awayPlayers.forEach(player => {
+        processPlayerEvents(player, match.away_team_id, match.away_team_name, 'away');
+      });
+      
+      console.log(`Total de eventos a guardar: ${matchEvents.length}`);
+      
+      // Guardar eventos en la base de datos
       if (matchEvents.length > 0) {
-        const { error: eventError } = await supabase
+        console.log('Guardando eventos en la base de datos...');
+        
+        // Preparar eventos para la base de datos (convertir a snake_case)
+        const eventsToSave = matchEvents.map(event => ({
+          player_id: event.playerId,
+          match_id: safeMatchId,
+          team_id: event.teamId,
+          event_type: event.type,
+          minute: event.minute,
+          details: event.details || '',
+          created_at: event.timestamp.toISOString(),
+          updated_at: new Date().toISOString()
+        }));
+        
+        // Primero, eliminar eventos existentes para este partido
+        const { error: deleteError } = await supabase
           .from('match_events')
-          .upsert(matchEvents, { onConflict: 'player_id,match_id,event_type' });
-
-        if (eventError) {
-          console.error('Error saving match events:', eventError);
-          throw eventError;
+          .delete()
+          .eq('match_id', safeMatchId);
+          
+        if (deleteError) {
+          console.error('Error al eliminar eventos existentes:', deleteError);
+          throw deleteError;
         }
-      }
-
-      // Update match status to 'completed' if not already
-      if (match?.status !== 'completed') {
-        const { error: matchError } = await supabase
-          .from('matches')
-          .update({ status: 'completed' })
-          .eq('id', matchId);
-
-        if (matchError) {
-          console.error('Error updating match status:', matchError);
-          throw matchError;
+        
+        console.log('Eventos existentes eliminados correctamente');
+        
+        // Insertar los nuevos eventos en lotes
+        const batchSize = 10;
+        for (let i = 0; i < eventsToSave.length; i += batchSize) {
+          const batch = eventsToSave.slice(i, i + batchSize);
+          const { error: insertError } = await supabase
+            .from('match_events')
+            .insert(batch);
+            
+          if (insertError) {
+            console.error('Error al insertar lote de eventos:', insertError);
+            throw insertError;
+          }
+          
+          console.log(`Lote de eventos ${Math.floor(i / batchSize) + 1} insertado correctamente`);
         }
+        
+        console.log('Todos los eventos se han guardado correctamente');
+      } else {
+        console.log('No hay eventos para guardar');
       }
-
-      setSaving(false);
-      Alert.alert('Éxito', 'El resultado del partido ha sido guardado correctamente');
-      router.back();
-    } catch (error) {
-      console.error('Error saving match result:', error);
-      Alert.alert('Error', 'Ocurrió un error al guardar el resultado del partido');
-      setSaving(false);
+      
+      // Actualizar estadísticas de jugadores en la base de datos
+    console.log('Actualizando estadísticas de jugadores...');
+    
+    // Actualizar goles y tarjetas de los jugadores del equipo local
+    for (const player of homePlayers) {
+      const { error: playerError } = await supabase
+        .from('players')
+        .update({
+          goals: player.goals || 0,
+          yellow_cards: player.yellow_cards || 0,
+          red_card: player.red_card || false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', player.id);
+        
+      if (playerError) {
+        console.error(`Error al actualizar estadísticas del jugador ${player.id}:`, playerError);
+        // Continuar con el siguiente jugador en caso de error
+        continue;
+      }
     }
-  };
+    
+    // Actualizar goles y tarjetas de los jugadores del equipo visitante
+    for (const player of awayPlayers) {
+      const { error: playerError } = await supabase
+        .from('players')
+        .update({
+          goals: player.goals || 0,
+          yellow_cards: player.yellow_cards || 0,
+          red_card: player.red_card || false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', player.id);
+        
+      if (playerError) {
+        console.error(`Error al actualizar estadísticas del jugador ${player.id}:`, playerError);
+        // Continuar con el siguiente jugador en caso de error
+        continue;
+      }
+    }
+    
+    // Mostrar mensaje de éxito
+    Alert.alert(
+      '¡Éxito!', 
+      'El resultado del partido se ha guardado correctamente.',
+      [
+        {
+          text: 'Aceptar',
+          onPress: () => {
+            // Navegar a la pantalla de partidos del torneo
+            if (router) {
+              router.back();
+            }
+          }
+        }
+      ]
+    );
+  } catch (error) {
+    console.error('Error al guardar el resultado:', error);
+    Alert.alert(
+      'Error', 
+      'No se pudo guardar el resultado del partido. Por favor, inténtalo de nuevo.'
+    );
+  } finally {
+    setSaving(false);
+  }
+}, [match, homePlayers, awayPlayers, logMatchEvent, removeMatchEvent, setHomePlayers, setAwayPlayers]);
 
-  // Render player item
-  const renderPlayerItem = ({ item: player, teamId }: { item: Player; teamId: string }) => (
+const renderPlayerItem = ({ item: player, teamId }: { item: Player; teamId: string }) => {
+  return (
     <View style={[
       styles.playerRow,
       player.red_card && styles.playerSuspended
@@ -693,19 +865,17 @@ export default function MatchResultScreen() {
         <Text style={styles.statValue}>{player.yellow_cards}</Text>
         <View style={styles.buttonGroup}>
           <View style={styles.yellowCardsContainer}>
-            {/* Mostrar tarjeta(s) amarilla(s) solo si no tiene roja */}
             {!player.red_card && (
               <>
-                {/* Mostrar 1 tarjeta amarilla con botón de eliminar */}
                 {player.yellow_cards === 1 && (
                   <View style={styles.yellowCardContainer}>
                     <TouchableOpacity
                       onPress={() => handleYellowCardChange(player, teamId, 1)}
                       disabled={saving}
                     >
-                      <View style={[styles.cardBadge, styles.yellowCardBadge, styles.singleCard]}>
-                        {/* Tarjeta amarilla sin texto */}
-                      </View>
+                        <View style={[styles.cardBadge, styles.yellowCardBadge, styles.singleCard]}>
+                      <Text style={[styles.cardText, { color: '#000000' }]}>AMARILLA</Text>
+                    </View>
                     </TouchableOpacity>
                     <TouchableOpacity 
                       onPress={() => handleYellowCardChange(player, teamId, -1)}
@@ -717,28 +887,31 @@ export default function MatchResultScreen() {
                   </View>
                 )}
                 
-                {/* Mostrar 2 tarjetas amarillas (que se convierten en roja) */}
                 {player.yellow_cards === 2 && (
                   <View style={styles.yellowCardsWrapper}>
-                    <View style={[styles.cardBadge, styles.yellowCardBadge, styles.firstCard]} />
-                    <View style={[styles.cardBadge, styles.yellowCardBadge, styles.secondCard]} />
+                    <View style={[styles.cardBadge, styles.yellowCardBadge, styles.firstCard]}>
+                      <Text style={[styles.cardText, { color: '#000000', fontSize: 10 }]}>AMARILLA</Text>
+                    </View>
+                    <View style={[styles.cardBadge, styles.yellowCardBadge, styles.secondCard]}>
+                      <Text style={[styles.cardText, { color: '#000000', fontSize: 10 }]}>AMARILLA</Text>
+                    </View>
                   </View>
                 )}
                 
-                {/* Botón para primera tarjeta si no hay ninguna */}
                 {player.yellow_cards === 0 && (
                   <TouchableOpacity
                     style={[styles.statButton, styles.yellowCardButton, { marginLeft: player.yellow_cards > 0 ? 15 : 0 }]}
                     onPress={() => handleYellowCardChange(player, teamId, 1)}
                     disabled={saving}
                   >
-                    <View style={[styles.cardBadge, styles.yellowCardBadge]} />
+                    <View style={[styles.cardBadge, styles.yellowCardBadge]}>
+                      <Text style={[styles.cardText, { color: '#000000', fontSize: 14, fontWeight: 'bold' }]}>+</Text>
+                    </View>
                   </TouchableOpacity>
                 )}
               </>
             )}
             
-            {/* Mostrar tarjeta roja si corresponde */}
             {player.red_card && (
               <View style={[styles.cardBadge, styles.redCardBadge]}>
                 <Text style={styles.redCardText}>ROJA</Text>
@@ -746,7 +919,6 @@ export default function MatchResultScreen() {
             )}
           </View>
           
-          {/* Botón para quitar tarjeta amarilla */}
           <TouchableOpacity
             style={[styles.statButton, styles.yellowCardButton]}
             onPress={() => handleYellowCardChange(player, teamId, -1)}
@@ -771,11 +943,12 @@ export default function MatchResultScreen() {
           <View style={[
             styles.cardBadge,
             player.red_card ? styles.redCardBadge : styles.redCardInactive,
-            { transform: [{ rotate: '0deg' }] }
+            { transform: [{ rotate: player.red_card ? '15deg' : '0deg' }] }
           ]}>
             <Text style={[
               styles.cardText,
-              player.red_card ? styles.redCardText : styles.redCardInactiveText
+              player.red_card ? styles.redCardText : styles.redCardInactiveText,
+              { transform: [{ rotate: player.red_card ? '-15deg' : '0deg' }] }
             ]}>
               {player.red_card ? 'ROJA' : 'ROJA'}
             </Text>
@@ -784,6 +957,7 @@ export default function MatchResultScreen() {
       </View>
     </View>
   );
+}
 
   if (loading) {
     return (
@@ -967,6 +1141,110 @@ export default function MatchResultScreen() {
 }
 
 const styles = StyleSheet.create({
+  // Layout
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+  },
+  loadingText: {
+    marginTop: 10,
+    color: '#666',
+  },
+  matchContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 16,
+    margin: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+    color: '#333',
+  },
+  
+  // Teams & Score
+  teamsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  teamContainer: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  teamHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  teamLogo: {
+    width: 50,
+    height: 50,
+    marginRight: 10,
+    resizeMode: 'contain' as const,
+  },
+  teamName: {
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  scoreContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scoreDisplay: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    width: 50,
+    height: 50,
+    lineHeight: 50,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    marginHorizontal: 5,
+  },
+  scoreInput: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    width: 50,
+    height: 50,
+    borderWidth: 1,
+    borderColor: '#ef9a9a',
+    marginLeft: 4,
+    paddingHorizontal: 4,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 24,
+  },
+  vsText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginHorizontal: 10,
+    color: '#666',
+  },
+  
   // Events Section
   eventsSection: {
     marginTop: 20,
@@ -1029,115 +1307,93 @@ const styles = StyleSheet.create({
   },
   eventType: {
     fontWeight: 'bold',
+    color: '#333',
   },
   removeEventButton: {
     padding: 5,
   },
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  scrollView: {
-    flex: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-  },
-  loadingText: {
-    marginTop: 10,
-    color: '#666',
-  },
-  matchContainer: {
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    padding: 16,
-    margin: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    textAlign: 'center',
-    color: '#333',
-  },
-  teamsContainer: {
+  
+  // Buttons
+  buttonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
+    marginTop: 20,
+    gap: 10,
   },
-  teamContainer: {
+  saveButton: {
     flex: 1,
-    alignItems: 'center',
-  },
-  teamHeader: {
-    flexDirection: 'row',
+    backgroundColor: '#FF6B00',
+    padding: 15,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 10,
   },
-  teamLogo: {
-    width: 50,
-    height: 50,
+  saveButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#f0f0f0',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  cancelButtonText: {
+    color: '#333',
+    fontWeight: '600',
+    fontSize: 16,
+  },
+  
+  // Cards
+  cardText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#000',
+    textAlign: 'center',
+  },
+  yellowCardContainer: {
+    position: 'relative',
+    flexDirection: 'row',
+    alignItems: 'center',
     marginRight: 10,
   },
-  teamName: {
-    fontSize: 16,
-    fontWeight: '600',    textAlign: 'center',
-  },
-  scoreContainer: {
+  yellowCardsWrapper: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    position: 'relative',
+    width: 40,
+    height: 40,
+    marginRight: 10,
   },
-  scoreDisplay: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    width: 50,
-    height: 50,
-    lineHeight: 50,
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    backgroundColor: '#fff',
-    marginHorizontal: 5,
+  firstCard: {
+    marginRight: -5,
+    zIndex: 1,
   },
-  scoreInput: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    width: 50,
-    height: 50,
-    borderWidth: 2,
-    borderColor: '#e0e0e0',
-    borderWidth: 1,
-    borderColor: '#ef9a9a',
-    marginLeft: 4,
-    paddingHorizontal: 4,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minWidth: 24,
+  secondCard: {
+    transform: [{ rotate: '10deg' }],
+  },
+  removeCardButton: {
+    marginLeft: 5,
+  },
+  
+  // Own Goal
+  ownGoalButton: {
+    backgroundColor: '#ffeb3b',
+    padding: 4,
+    borderRadius: 4,
+    marginLeft: 5,
   },
   ownGoalButtonText: {
     color: '#c62828',
     fontSize: 10,
     fontWeight: 'bold',
   },
-  vsText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginHorizontal: 10,
-    color: '#666',
-  },
+  
+  // Legend
   legendContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -1157,6 +1413,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666',
   },
+  
+  // Players
   playersContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1230,6 +1488,12 @@ const styles = StyleSheet.create({
   goalButton: {
     backgroundColor: '#e8f5e9',
   },
+  ownGoalButton: {
+    backgroundColor: '#ffebee',
+    borderWidth: 1,
+    borderColor: '#ffcdd2',
+    borderRadius: 4,
+  },
   yellowCardButton: {
     backgroundColor: '#fffde7',
   },
@@ -1239,7 +1503,7 @@ const styles = StyleSheet.create({
   activeRedCard: {
     backgroundColor: '#f44336',
   },
-  // Estilos para las tarjetas
+  // Card container
   yellowCardsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1248,63 +1512,75 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   singleCard: {
+    marginRight: 4,
     position: 'relative',
-    marginRight: 10,
   },
+  // Base card badge style
   cardBadge: {
-    width: 24,  // Ancho reducido para el diseño de tarjeta
-    height: 36, // Altura aumentada para mejor proporción
-    borderRadius: 4,  // Bordes más redondeados
+    width: 24,
+    height: 36,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1.5,  // Borde ligeramente más grueso
+    borderRadius: 4,
+    borderWidth: 1.5,
     borderColor: '#000',
     margin: 2,
   },
-  // Tarjeta amarilla
+  // Yellow card style
   yellowCardBadge: {
     backgroundColor: '#FFD700',
     borderColor: '#000',
-    width: 24,
-    height: 36,
-    borderRadius: 4,
     borderWidth: 1.5,
   },
-  // Tarjeta roja
+  // Red card style
   redCardBadge: {
     backgroundColor: '#FF0000',
     borderColor: '#000',
-    width: 24,
-    height: 36,
-    borderRadius: 4,
     borderWidth: 1.5,
   },
+  // Inactive red card style
   redCardInactive: {
     backgroundColor: 'transparent',
     borderColor: '#FF0000',
-    width: 24,
-    height: 36,
-    borderRadius: 4,
     borderWidth: 1.5,
   },
   // Texto de tarjeta roja inactiva
   redCardInactiveText: {
     color: '#FF0000',
   },
-  // Texto de tarjeta roja activa
-  redCardText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: 'bold',
-  },
-  // Contenedor de tarjetas amarillas
+  // Yellow card container with improved layout
   yellowCardContainer: {
     position: 'relative',
     flexDirection: 'row',
     alignItems: 'center',
     marginRight: 10,
   },
-  // Botón para eliminar tarjeta
+  // Wrapper for multiple yellow cards
+  yellowCardsWrapper: {
+    flexDirection: 'row',
+    position: 'relative',
+    width: 40,
+    height: 40,
+    marginRight: 10,
+  },
+  // First card in a stack
+  firstCard: {
+    position: 'absolute',
+    left: 0,
+    zIndex: 1,
+    width: 24,
+    height: 36,
+  },
+  // Second card in a stack (slightly offset)
+  secondCard: {
+    position: 'absolute',
+    left: 12,
+    zIndex: 1,
+    width: 24,
+    height: 36,
+    transform: [{ rotate: '10deg' }],
+  },
+  // Button to remove a card
   removeCardButton: {
     position: 'absolute',
     top: -8,
@@ -1316,40 +1592,306 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 3,
+    padding: 2,
   },
-  // Contenedor para mostrar múltiples tarjetas amarillas
-  yellowCardsWrapper: {
-    position: 'relative',
-    width: 40,
-    height: 40,
-    marginRight: 10,
+  // Red card text style
+  redCardText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: 'bold',
   },
-  // Primera tarjeta cuando hay dos
-  firstCard: {
-    position: 'absolute',
-    left: 0,
-    zIndex: 1,
-    width: 24,
-    height: 36,
-  },
-  // Segunda tarjeta superpuesta
-  secondCard: {
-    position: 'absolute',
-    left: 12,
-    zIndex: 2,
-    width: 24,
-    height: 36,
-  },
-  // Estilo del texto en las tarjetas (oculto para tarjeta amarilla)
+  // Card text style for all card types
   cardText: {
-    display: 'none',
+    fontSize: 8,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
+  // Button container styles
   buttonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 20,
-    gap: 10,
+    paddingHorizontal: 16,
   },
+  // Team players section title
+  teamPlayersTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 20,
+    marginBottom: 10,
+    paddingHorizontal: 16,
+  },
+  // Player row styles
+  playerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  // Suspended player style
+  playerSuspended: {
+    opacity: 0.5,
+  },
+  // Suspended text style
+  suspendedText: {
+    color: '#888',
+    fontSize: 12,
+    marginLeft: 8,
+  },
+  // Player name style
+  playerName: {
+    flex: 1,
+    fontSize: 16,
+  },
+  // Stat container
+  statContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // Stat value
+  statValue: {
+    minWidth: 24,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+  // Yellow card text style
+  yellowCardText: {
+    color: '#000000',
+    fontSize: 10,
+    textAlign: 'center',
+    fontWeight: 'bold',
+  },
+  // Stat button
+  statButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: 4,
+    backgroundColor: '#f0f0f0',
+  },
+  // Goal button
+  goalButton: {
+    backgroundColor: '#4CAF50',
+  },
+  // Own goal button
+  ownGoalButton: {
+    backgroundColor: '#FF9800',
+    marginLeft: 8,
+  },
+  // Yellow card button
+  yellowCardButton: {
+    backgroundColor: '#FFC107',
+    marginLeft: 8,
+  },
+  // Red card button
+  redCardButton: {
+    backgroundColor: '#F44336',
+    marginLeft: 8,
+  },
+  // Save button
+  saveButton: {
+    backgroundColor: '#2196F3',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    marginTop: 20,
+    alignSelf: 'center',
+  },
+  // Save button text
+  saveButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  // Cancel button
+  cancelButton: {
+    backgroundColor: '#9E9E9E',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    marginTop: 12,
+    alignSelf: 'center',
+  },
+  // Cancel button text
+  cancelButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  // Own goal button text
+  ownGoalButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  // Yellow card container
+  yellowCardContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  // Yellow cards wrapper
+  yellowCardsWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  // First yellow card
+  firstCard: {
+    width: 12,
+    height: 16,
+    backgroundColor: '#FFC107',
+    borderWidth: 1,
+    borderColor: '#000',
+    marginRight: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Second yellow card
+  secondCard: {
+    width: 12,
+    height: 16,
+    backgroundColor: '#FFC107',
+    borderWidth: 1,
+    borderColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Remove card button
+  removeCardButton: {
+    marginLeft: 4,
+    padding: 2,
+  },
+  // Red card container
+  redCardContainer: {
+    width: 12,
+    height: 16,
+    backgroundColor: '#F44336',
+    borderWidth: 1,
+    borderColor: '#000',
+    marginLeft: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Events container
+  eventsContainer: {
+    marginTop: 20,
+    paddingHorizontal: 16,
+  },
+  // Events title
+  eventsTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  // Event item
+  eventItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  // Event time
+  eventTime: {
+    width: 40,
+    fontWeight: 'bold',
+  },
+  // Event type
+  eventType: {
+    width: 30,
+    marginLeft: 10,
+  },
+  // Event player name
+  eventPlayer: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  // Event remove button
+  eventRemoveButton: {
+    padding: 4,
+  },
+  // No events text
+  noEventsText: {
+    textAlign: 'center',
+    color: '#888',
+    marginTop: 10,
+  },
+  // Loading container
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Error text
+  errorText: {
+    color: '#F44336',
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  // Success text
+  successText: {
+    color: '#4CAF50',
+    textAlign: 'center',
+    marginTop: 10,
+  },
+  // Modal container
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  // Modal content
+  modalContent: {
+    width: '80%',
+    backgroundColor: 'white',
+    borderRadius: 10,
+    padding: 20,
+    alignItems: 'center',
+  },
+  // Modal title
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  // Modal text
+  modalText: {
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  // Modal buttons container
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+  },
+  // Modal button
+  modalButton: {
+    flex: 1,
+    padding: 10,
+    marginHorizontal: 5,
+    borderRadius: 5,
+    alignItems: 'center',
+  },
+  // Modal cancel button
+  modalCancelButton: {
+    backgroundColor: '#9E9E9E',
+  },
+  // Modal confirm button
+  modalConfirmButton: {
+    backgroundColor: '#2196F3',
+  },
+  // Modal button text
+  modalButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
+  // Team players title
   teamPlayersTitle: {
     fontSize: 14,
     fontWeight: '600',
@@ -1414,11 +1956,17 @@ const styles = StyleSheet.create({
   goalButton: {
     backgroundColor: '#e8f5e9',
   },
+  ownGoalButton: {
+    backgroundColor: '#ffebee',
+    borderColor: '#ffcdd2',
+    borderWidth: 1,
+    borderRadius: 4,
+  },
   yellowCardButton: {
     backgroundColor: '#fffde7',
   },
   redCardButton: {
-    backgroundColor: '#ffebee',
+    backgroundColor: '#F44336',
   },
   saveButton: {
     flex: 1,
@@ -1449,5 +1997,10 @@ const styles = StyleSheet.create({
     color: '#666',
     fontSize: 20,
     fontWeight: 'bold',
+  },
+  ownGoalButtonText: {
+    color: '#d32f2f',
+    fontWeight: 'bold',
+    fontSize: 12,
   },
 });

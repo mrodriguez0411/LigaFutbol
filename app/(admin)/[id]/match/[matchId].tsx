@@ -117,7 +117,7 @@ export default function MatchResultScreen() {
         const { data: eventsData, error: eventsError } = await supabase
           .from('match_events')
           .select('*')
-          .eq('match_id', safeMatchId)
+          .eq('matchId', safeMatchId)  // Changed from match_id to matchId to match the database schema
           .order('minute', { ascending: true });
           
         if (eventsError) throw eventsError;
@@ -256,7 +256,10 @@ export default function MatchResultScreen() {
   const handleGoalChange = useCallback((player: Player, teamId: string, change: number) => {
     if (!match) return;
     
-    const updatedPlayers = teamId === match.home_team_id ? [...homePlayers] : [...awayPlayers];
+    const isHomeTeam = teamId === match.home_team_id;
+    const updatedPlayers = isHomeTeam ? [...homePlayers] : [...awayPlayers];
+    const setPlayers = isHomeTeam ? setHomePlayers : setAwayPlayers;
+    
     const playerIndex = updatedPlayers.findIndex(p => p.id === player.id);
     if (playerIndex === -1) return;
     
@@ -272,13 +275,16 @@ export default function MatchResultScreen() {
       goals: newGoals,
     };
     
+    // Update the players state
+    setPlayers(updatedPlayers);
+    
     // Handle event logging/removal and update score
     if (goalDiff > 0) {
       // Goal added - log new event and update score
       logMatchEvent('goal', updatedPlayers[playerIndex], teamId);
       
       // Update the score based on which team scored
-      if (teamId === match.home_team_id) {
+      if (isHomeTeam) {
         const newScore = (parseInt(homeScore) || 0) + goalDiff;
         setHomeScore(newScore.toString());
       } else {
@@ -290,20 +296,13 @@ export default function MatchResultScreen() {
       removeMatchEvent(player.id, 'goal');
       
       // Update the score based on which team had a goal removed
-      if (teamId === match.home_team_id) {
+      if (isHomeTeam) {
         const newScore = Math.max(0, (parseInt(homeScore) || 0) + goalDiff);
         setHomeScore(newScore.toString());
       } else {
         const newScore = Math.max(0, (parseInt(awayScore) || 0) + goalDiff);
         setAwayScore(newScore.toString());
       }
-    }
-    
-    // Update the appropriate team's players
-    if (teamId === match.home_team_id) {
-      setHomePlayers(updatedPlayers);
-    } else {
-      setAwayPlayers(updatedPlayers);
     }
   }, [match, homePlayers, awayPlayers, homeScore, awayScore, logMatchEvent, removeMatchEvent, setHomePlayers, setAwayPlayers, setHomeScore, setAwayScore]);
 
@@ -546,59 +545,6 @@ export default function MatchResultScreen() {
       // Procesar eventos del partido si existen
       if (matchEvents && matchEvents.length > 0) {
         console.log(`Found ${matchEvents.length} existing match events`);
-        
-        // Crear un mapa temporal para contar eventos por jugador
-        const homePlayersMap = new Map(initialHomePlayers.map(p => [p.id, { ...p }]));
-        const awayPlayersMap = new Map(initialAwayPlayers.map(p => [p.id, { ...p }]));
-        
-        // Procesar cada evento
-        const processedEvents: MatchEvent[] = [];
-        
-        for (const event of matchEvents) {
-          const isHomeTeam = event.team_id === matchData.home_team_id;
-          const playerMap = isHomeTeam ? homePlayersMap : awayPlayersMap;
-          const player = playerMap.get(event.player_id);
-          
-          if (player) {
-            // Actualizar contadores según el tipo de evento
-            if (event.event_type === 'goal') {
-              player.goals = (player.goals || 0) + 1;
-            } else if (event.event_type === 'yellow_card') {
-              player.yellow_cards = (player.yellow_cards || 0) + 1;
-            } else if (event.event_type === 'red_card') {
-              player.red_card = true;
-            }
-            
-            // Agregar evento a la lista de eventos procesados
-            if (player.first_name !== null || player.last_name !== null) {
-              const team = isHomeTeam ? matchData.home_team : matchData.away_team;
-              processedEvents.push({
-                id: event.id,
-                type: event.event_type as EventType,
-                playerId: player.id,
-                playerName: `${player.first_name || ''} ${player.last_name || ''}`.trim(),
-                teamId: event.team_id,
-                teamName: team?.name || (isHomeTeam ? 'Equipo Local' : 'Equipo Visitante'),
-                minute: event.minute || 0,
-                timestamp: event.created_at ? new Date(event.created_at) : new Date(),
-                details: event.event_type === 'goal' ? 'Gol' : 
-                         event.event_type === 'yellow_card' ? 'Tarjeta amarilla' : 
-                         'Tarjeta roja'
-              });
-            }
-          }
-        }
-        
-        // Actualizar el estado con los eventos procesados
-        setMatchEvents(processedEvents);
-        
-        // Actualizar el estado de los jugadores
-        setHomePlayers(Array.from(homePlayersMap.values()));
-        setAwayPlayers(Array.from(awayPlayersMap.values()));
-        
-        console.log('Processed match events and updated player stats');
-      } else {
-        // Si no hay eventos, establecer los jugadores con valores por defecto
         setHomePlayers(initialHomePlayers);
         setAwayPlayers(initialAwayPlayers);
         setMatchEvents([]);
@@ -617,142 +563,71 @@ export default function MatchResultScreen() {
     }
   };
 
+  // Save match result and events
   const handleSaveResult = useCallback(async () => {
-    if (!match) {
-      console.error('No se pudo cargar la información del partido');
-      Alert.alert('Error', 'No se pudo cargar la información del partido');
-      return;
-    }
+    if (!match) return;
     
-    if (!homeScore || !awayScore) {
-      Alert.alert('Error', 'Por favor ingrese el resultado completo');
-      return;
-    }
-
-    setSaving(true);
-
     try {
-      const homeScoreValue = Number(homeScore) || 0;
-      const awayScoreValue = Number(awayScore) || 0;
+      setSaving(true);
       
-      console.log('Actualizando marcador del partido:', {
-        matchId: safeMatchId,
-        homeScore: homeScoreValue,
-        awayScore: awayScoreValue,
-        homeTeamId: match.home_team_id,
-        awayTeamId: match.away_team_id
-      });
-      
-      // Actualizar el marcador del partido
-      const { data: updatedMatch, error: matchError } = await supabase
+      // Update match scores
+      const { error: matchError } = await supabase
         .from('matches')
         .update({
-          home_team_score: homeScoreValue,
-          away_team_score: awayScoreValue,
+          home_team_score: parseInt(homeScore) || 0,
+          away_team_score: parseInt(awayScore) || 0,
           status: 'completed',
           updated_at: new Date().toISOString()
         })
-        .eq('id', safeMatchId)
-        .select()
-        .single();
-
-      if (matchError) {
-        console.error('Error al actualizar el marcador del partido:', matchError);
-        throw matchError;
-      }
+        .eq('id', match.id);
       
-      console.log('Marcador actualizado correctamente:', updatedMatch);
-
-      // Preparar eventos
-      const matchEvents: MatchEvent[] = [];
-      const now = new Date();
+      if (matchError) throw matchError;
       
-      // Función para agregar eventos de un jugador
-      const processPlayerEvents = (player: Player, teamId: string, teamName: string, teamType: 'home' | 'away') => {
-        const playerName = `${player.first_name || ''} ${player.last_name || ''}`.trim();
-        
-        // Agregar goles
-        if (player.goals > 0) {
-          console.log(`[${teamType}] Agregando ${player.goals} goles para ${playerName}`);
-          for (let i = 0; i < player.goals; i++) {
-            matchEvents.push({
-              id: `${player.id}-goal-${i}-${Date.now()}`,
-              type: 'goal',
-              playerId: player.id,
-              playerName: playerName,
-              teamId: teamId,
-              teamName: teamName,
-              minute: 0, // TODO: Implementar lógica para el minuto
-              timestamp: now,
-              details: `Gol de ${playerName}`
-            });
-          }
-        }
-        
-        // Agregar tarjetas amarillas
-        if (player.yellow_cards > 0) {
-          console.log(`[${teamType}] Agregando ${player.yellow_cards} tarjetas amarillas para ${playerName}`);
-          for (let i = 0; i < player.yellow_cards; i++) {
-            matchEvents.push({
-              id: `${player.id}-yellow-${i}-${Date.now()}`,
-              type: 'yellow_card',
-              playerId: player.id,
-              playerName: playerName,
-              teamId: teamId,
-              teamName: teamName,
-              minute: 0, // TODO: Implementar lógica para el minuto
-              timestamp: now,
-              details: `Tarjeta amarilla a ${playerName}`
-            });
-          }
-        }
-        
-        // Agregar tarjeta roja si corresponde
-        if (player.red_card) {
-          console.log(`[${teamType}] Agregando tarjeta roja para ${playerName}`);
-          matchEvents.push({
-            player_id: player.id,
-            match_id: matchId,
-            team_id: match?.away_team_id,
-            event_type: 'red_card',
-          });
-        }
-      };
-
-      // Save all events
-      if (matchEvents.length > 0) {
-        const { error: eventError } = await supabase
+      // Prepare events for saving
+      const eventsToSave = matchEvents.map(event => ({
+        match_id: match.id,
+        player_id: event.playerId,
+        player_name: event.playerName,
+        team_id: event.teamId,
+        team_name: event.teamName,
+        event_type: event.type,
+        minute: event.minute,
+        details: event.details,
+        created_at: new Date().toISOString()
+      }));
+      
+      // Save events in batches to avoid hitting payload limits
+      const batchSize = 50;
+      for (let i = 0; i < eventsToSave.length; i += batchSize) {
+        const batch = eventsToSave.slice(i, i + batchSize);
+        const { error: eventsError } = await supabase
           .from('match_events')
-          .upsert(matchEvents, { onConflict: 'player_id,match_id,event_type' });
-
-        if (eventError) {
-          console.error('Error saving match events:', eventError);
-          throw eventError;
-        }
+          .upsert(batch, { onConflict: 'id' });
+        
+        if (eventsError) throw eventsError;
       }
-
-      // Update match status to 'completed' if not already
-      if (match?.status !== 'completed') {
-        const { error: matchError } = await supabase
-          .from('matches')
-          .update({ status: 'completed' })
-          .eq('id', matchId);
-
-        if (matchError) {
-          console.error('Error updating match status:', matchError);
-          throw matchError;
-        }
-      }
-
-      setSaving(false);
-      Alert.alert('Éxito', 'El resultado del partido ha sido guardado correctamente');
-      router.back();
+      
+      Alert.alert(
+        '¡Guardado exitoso!',
+        'El resultado del partido y los eventos han sido guardados correctamente.',
+        [
+          {
+            text: 'Aceptar',
+            onPress: () => router.back()
+          }
+        ]
+      );
+      
     } catch (error) {
       console.error('Error saving match result:', error);
-      Alert.alert('Error', 'Ocurrió un error al guardar el resultado del partido');
+      Alert.alert(
+        'Error',
+        'No se pudo guardar el resultado del partido. Por favor, inténtalo de nuevo.'
+      );
+    } finally {
       setSaving(false);
     }
-  };
+  }, [match, homeScore, awayScore, matchEvents, router]);
 
 const renderPlayerItem = ({ item: player, teamId }: { item: Player; teamId: string }) => {
   return (
